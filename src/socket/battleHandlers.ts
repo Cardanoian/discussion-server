@@ -31,7 +31,7 @@ const updateUserStats = async (userId: string, won: boolean) => {
     .single();
 
   if (error || !data) {
-    console.error('Error fetching user stats:', error);
+    console.error('사용자 통계 가져오기 오류:', error);
     return;
   }
 
@@ -186,7 +186,7 @@ export const registerBattleHandlers = (io: Server, socket: Socket) => {
           // Clean up
           delete battleStates[roomId];
         } catch (e) {
-          console.error('Error with Gemini API:', e);
+          console.error('Gemini API 오류:', e);
           io.to(roomId).emit('battle_error', 'AI 채점 중 오류가 발생했습니다.');
         }
       }

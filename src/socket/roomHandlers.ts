@@ -14,29 +14,26 @@ const createRoom = (roomId: string, subject: Subject): BattleRoom => ({
 
 export const registerRoomHandlers = (io: Server, socket: Socket) => {
   socket.on('get_subjects', async (callback) => {
-    console.log('Fetching subjects from database...');
+    console.log('데이터베이스에서 주제를 가져오는 중...');
 
     // Try database first, fallback to hardcoded data if it fails
     try {
       const { data, error } = await supabase.from('subjects').select('*');
-      console.log('Subjects query result:', { data, error });
+      console.log('주제 쿼리 결과:', { data, error });
 
       if (error) {
-        console.error('Error fetching subjects:', error);
-        console.log('Using fallback hardcoded subjects...');
+        console.error('주제 가져오기 오류:', error);
+        console.log('대체 하드코딩된 주제를 사용합니다...');
 
-        console.log('Sending fallback subjects to client:', fallbackSubjects);
+        console.log('클라이언트에 대체 주제를 전송합니다:', fallbackSubjects);
         callback({ subjects: fallbackSubjects });
         return;
       }
 
-      console.log('Sending subjects to client:', data);
+      console.log('클라이언트에 주제를 전송합니다:', data);
       callback({ subjects: data });
     } catch (err) {
-      console.error(
-        'Database connection failed, using fallback subjects:',
-        err
-      );
+      console.error('데이터베이스 연결 실패, 대체 주제를 사용합니다:', err);
 
       // console.log('Sending fallback subjects to client:', fallbackSubjects);
       callback({ subjects: fallbackSubjects });
@@ -58,7 +55,7 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
         .single()
         .then(({ data, error }) => {
           if (error || !data) {
-            callback({ error: 'Subject not found' });
+            callback({ error: '주제를 찾을 수 없습니다.' });
             return;
           }
           const newRoom = createRoom(roomId, data);
@@ -91,7 +88,7 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
           rooms.filter((r) => !r.isFull && !r.battleStarted)
         );
       } else {
-        callback({ error: 'Room not found or is full' });
+        callback({ error: '방을 찾을 수 없거나 가득 찼습니다.' });
       }
     }
   );
