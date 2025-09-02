@@ -8,7 +8,12 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 interface Player {
   socketId: string;
   userId: string;
+  displayname: string;
   isReady: boolean;
+  position?: 'agree' | 'disagree';
+  rating: number;
+  wins: number;
+  loses: number;
 }
 
 interface BattleState {

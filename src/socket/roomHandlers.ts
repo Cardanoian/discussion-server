@@ -42,51 +42,105 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
 
   socket.on(
     'create_room',
-    (
+    async (
       { userId, subjectId }: { userId: string; subjectId: string },
       callback
     ) => {
       const roomId = `room_${new Date().getTime()}`;
 
-      supabase
-        .from('subjects')
-        .select('*')
-        .eq('uuid', subjectId)
-        .single()
-        .then(({ data, error }) => {
-          if (error || !data) {
-            callback({ error: '주제를 찾을 수 없습니다.' });
-            return;
-          }
-          const newRoom = createRoom(roomId, data);
-          newRoom.players.push({ socketId: socket.id, userId, isReady: false });
-          rooms.push(newRoom);
-          socket.join(roomId);
-          callback({ room: newRoom });
-          io.emit(
-            'rooms_update',
-            rooms.filter((r) => !r.isFull && !r.battleStarted)
-          );
+      try {
+        // 주제 정보 가져오기
+        const { data: subjectData, error: subjectError } = await supabase
+          .from('subjects')
+          .select('*')
+          .eq('uuid', subjectId)
+          .single();
+
+        if (subjectError || !subjectData) {
+          callback({ error: '주제를 찾을 수 없습니다.' });
+          return;
+        }
+
+        // 사용자 정보 가져오기
+        const { data: userData, error: userError } = await supabase
+          .from('user_profile')
+          .select('*')
+          .eq('user_uuid', userId)
+          .maybeSingle();
+
+        if (userError || !userData) {
+          callback({ error: '사용자 정보를 찾을 수 없습니다.' });
+          return;
+        }
+
+        const newRoom = createRoom(roomId, subjectData);
+        newRoom.players.push({
+          socketId: socket.id,
+          userId,
+          displayname: userData.display_name,
+          isReady: false,
+          rating: userData.rating,
+          wins: userData.wins,
+          loses: userData.loses,
         });
+        rooms.push(newRoom);
+        socket.join(roomId);
+        callback({ room: newRoom });
+        io.emit(
+          'rooms_update',
+          rooms.filter((r) => !r.isFull && !r.battleStarted)
+        );
+      } catch (error) {
+        console.error('방 생성 오류:', error);
+        callback({ error: '방 생성 중 오류가 발생했습니다.' });
+      }
     }
   );
 
   socket.on(
     'join_room',
-    ({ roomId, userId }: { roomId: string; userId: string }, callback) => {
+    async (
+      { roomId, userId }: { roomId: string; userId: string },
+      callback
+    ) => {
       const room = rooms.find((r) => r.roomId === roomId);
       if (room && !room.isFull) {
-        room.players.push({ socketId: socket.id, userId, isReady: false });
-        socket.join(roomId);
-        if (room.players.length === 2) {
-          room.isFull = true;
+        try {
+          // 사용자 정보 가져오기
+          const { data: userData, error: userError } = await supabase
+            .from('user_profile')
+            .select('*')
+            .eq('user_uuid', userId)
+            .maybeSingle();
+
+          if (userError || !userData) {
+            callback({ error: '사용자 정보를 찾을 수 없습니다.' });
+            return;
+          }
+
+          room.players.push({
+            socketId: socket.id,
+            userId,
+            displayname: userData.display_name,
+            isReady: false,
+            rating: userData.rating,
+            wins: userData.wins,
+            loses: userData.loses,
+          });
+          socket.join(roomId);
+          if (room.players.length === 2) {
+            room.isFull = true;
+          }
+          callback({ room });
+          io.to(roomId).emit('room_update', room);
+          io.emit(
+            'rooms_update',
+            rooms.filter((r) => !r.isFull && !r.battleStarted)
+          );
+        } catch (error) {
+          console.error('방 참가 오류:', error);
+          callback({ error: '방 참가 중 오류가 발생했습니다.' });
         }
-        callback({ room });
-        io.to(roomId).emit('room_update', room);
-        io.emit(
-          'rooms_update',
-          rooms.filter((r) => !r.isFull && !r.battleStarted)
-        );
       } else {
         callback({ error: '방을 찾을 수 없거나 가득 찼습니다.' });
       }
@@ -118,6 +172,31 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
               rooms.filter((r) => !r.isFull && !r.battleStarted)
             );
           }
+        }
+      }
+    }
+  );
+
+  socket.on(
+    'select_position',
+    ({
+      roomId,
+      userId,
+      position,
+    }: {
+      roomId: string;
+      userId: string;
+      position: 'agree' | 'disagree';
+    }) => {
+      const room = rooms.find((r) => r.roomId === roomId);
+      if (room) {
+        const player = room.players.find((p) => p.userId === userId);
+        if (player) {
+          player.position = position;
+          io.to(roomId).emit('room_update', room);
+
+          // 클라이언트에 입장 선택 확인 전송
+          socket.emit('position_selected', { position });
         }
       }
     }

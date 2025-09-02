@@ -29,13 +29,18 @@ export type Subject = {
 };
 
 export type BattleRoom = {
-    roomId: string;
-    players: {
-        socketId: string;
-        userId: string;
-        isReady: boolean;
-    }[];
-    subject: Subject | null;
-    isFull: boolean;
-    battleStarted: boolean;
-}
+  roomId: string;
+  players: {
+    socketId: string;
+    userId: string;
+    displayname: string;
+    isReady: boolean;
+    position?: 'agree' | 'disagree'; // 찬성/반대 입장 추가
+    rating: number;
+    wins: number;
+    loses: number;
+  }[];
+  subject: Subject | null;
+  isFull: boolean;
+  battleStarted: boolean;
+};
