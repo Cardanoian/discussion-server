@@ -21,7 +21,7 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
   });
 
   socket.on('get_subjects', async (callback) => {
-    console.log('데이터베이스에서 주제를 가져오는 중...');
+    // console.log('데이터베이스에서 주제를 가져오는 중...');
 
     // Try database first, fallback to hardcoded data if it fails
     try {
@@ -105,7 +105,7 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
           'rooms_update',
           rooms.filter((r) => !r.isFull && !r.battleStarted)
         );
-        console.log(newRoom);
+        // console.log(newRoom);
       } catch (error) {
         console.error('방 생성 오류:', error);
         callback({ error: '방 생성 중 오류가 발생했습니다.' });
@@ -251,7 +251,7 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
   socket.on(
     'join_discussion_room',
     ({ roomId, userId }: { roomId: string; userId: string }) => {
-      console.log(`${userId}가 토론 룸 ${roomId}에 join 시도`);
+      // console.log(`${userId}가 토론 룸 ${roomId}에 join 시도`);
       const room = rooms.find((r) => r.roomId === roomId);
       if (room) {
         const player = room.players.find((p) => p.userId === userId);
@@ -276,7 +276,7 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
         if (player) {
           // 플레이어를 discussionView 준비 완료로 표시
           player.discussionViewReady = true;
-          console.log(`${player.displayname}이 discussionView 준비 완료`);
+          // console.log(`${player.displayname}이 discussionView 준비 완료`);
 
           // 두 플레이어 모두 준비되었는지 확인
           const allPlayersReady = room.players.every(
@@ -284,7 +284,7 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
           );
 
           if (allPlayersReady) {
-            console.log('모든 플레이어가 discussionView 준비 완료, 토론 시작');
+            // console.log('모든 플레이어가 discussionView 준비 완료, 토론 시작');
             // battleHandlers의 통합된 토론 시작 로직 사용
             startBattleLogic(io, room);
           }
