@@ -1,6 +1,8 @@
 import { Server, Socket } from 'socket.io';
 import { BattleRoom, Subject } from '../types/database';
 import { supabase } from '../supabaseClient';
+import { startBattleLogic } from './battleHandlers';
+import { requestManager } from '../utils/RequestManager';
 
 const rooms: BattleRoom[] = [];
 
@@ -13,6 +15,11 @@ const createRoom = (roomId: string, subject: Subject): BattleRoom => ({
 });
 
 export const registerRoomHandlers = (io: Server, socket: Socket) => {
+  // 소켓 연결 해제 시 요청 상태 정리
+  socket.on('disconnect', () => {
+    requestManager.cleanup(socket.id);
+  });
+
   socket.on('get_subjects', async (callback) => {
     console.log('데이터베이스에서 주제를 가져오는 중...');
 
@@ -46,6 +53,12 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
       { userId, subjectId }: { userId: string; subjectId: string },
       callback
     ) => {
+      // 중복 요청 방지
+      if (!requestManager.startProcessing(socket.id, 'create_room')) {
+        callback({ error: '이미 방 생성 요청을 처리 중입니다.' });
+        return;
+      }
+
       const roomId = `room_${new Date().getTime()}`;
 
       try {
@@ -57,6 +70,7 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
           .single();
 
         if (subjectError || !subjectData) {
+          requestManager.finishProcessing(socket.id, 'create_room');
           callback({ error: '주제를 찾을 수 없습니다.' });
           return;
         }
@@ -69,6 +83,7 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
           .maybeSingle();
 
         if (userError || !userData) {
+          requestManager.finishProcessing(socket.id, 'create_room');
           callback({ error: '사용자 정보를 찾을 수 없습니다.' });
           return;
         }
@@ -90,9 +105,12 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
           'rooms_update',
           rooms.filter((r) => !r.isFull && !r.battleStarted)
         );
+        console.log(newRoom);
       } catch (error) {
         console.error('방 생성 오류:', error);
         callback({ error: '방 생성 중 오류가 발생했습니다.' });
+      } finally {
+        requestManager.finishProcessing(socket.id, 'create_room');
       }
     }
   );
@@ -103,6 +121,12 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
       { roomId, userId }: { roomId: string; userId: string },
       callback
     ) => {
+      // 중복 요청 방지
+      if (!requestManager.startProcessing(socket.id, 'join_room')) {
+        callback({ error: '이미 방 참가 요청을 처리 중입니다.' });
+        return;
+      }
+
       const room = rooms.find((r) => r.roomId === roomId);
       if (room && !room.isFull) {
         try {
@@ -114,6 +138,7 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
             .maybeSingle();
 
           if (userError || !userData) {
+            requestManager.finishProcessing(socket.id, 'join_room');
             callback({ error: '사용자 정보를 찾을 수 없습니다.' });
             return;
           }
@@ -140,8 +165,11 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
         } catch (error) {
           console.error('방 참가 오류:', error);
           callback({ error: '방 참가 중 오류가 발생했습니다.' });
+        } finally {
+          requestManager.finishProcessing(socket.id, 'join_room');
         }
       } else {
+        requestManager.finishProcessing(socket.id, 'join_room');
         callback({ error: '방을 찾을 수 없거나 가득 찼습니다.' });
       }
     }
@@ -154,25 +182,34 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
   socket.on(
     'player_ready',
     ({ roomId, userId }: { roomId: string; userId: string }) => {
-      const room = rooms.find((r) => r.roomId === roomId);
-      if (room) {
-        const player = room.players.find((p) => p.userId === userId);
-        if (player) {
-          player.isReady = !player.isReady;
-          io.to(roomId).emit('room_update', room);
+      // 중복 요청 방지
+      if (!requestManager.startProcessing(socket.id, 'player_ready')) {
+        return;
+      }
 
-          if (
-            room.players.length === 2 &&
-            room.players.every((p) => p.isReady)
-          ) {
-            room.battleStarted = true;
-            io.to(roomId).emit('battle_start', room);
-            io.emit(
-              'rooms_update',
-              rooms.filter((r) => !r.isFull && !r.battleStarted)
-            );
+      try {
+        const room = rooms.find((r) => r.roomId === roomId);
+        if (room) {
+          const player = room.players.find((p) => p.userId === userId);
+          if (player) {
+            player.isReady = !player.isReady;
+            io.to(roomId).emit('room_update', room);
+
+            if (
+              room.players.length === 2 &&
+              room.players.every((p) => p.isReady)
+            ) {
+              room.battleStarted = true;
+              io.to(roomId).emit('battle_start', room);
+              io.emit(
+                'rooms_update',
+                rooms.filter((r) => !r.isFull && !r.battleStarted)
+              );
+            }
           }
         }
+      } finally {
+        requestManager.finishProcessing(socket.id, 'player_ready');
       }
     }
   );
@@ -188,15 +225,69 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
       userId: string;
       position: 'agree' | 'disagree';
     }) => {
+      // 중복 요청 방지
+      if (!requestManager.startProcessing(socket.id, 'select_position')) {
+        return;
+      }
+
+      try {
+        const room = rooms.find((r) => r.roomId === roomId);
+        if (room) {
+          const player = room.players.find((p) => p.userId === userId);
+          if (player) {
+            player.position = position;
+            io.to(roomId).emit('room_update', room);
+
+            // 클라이언트에 입장 선택 확인 전송
+            socket.emit('position_selected', { position });
+          }
+        }
+      } finally {
+        requestManager.finishProcessing(socket.id, 'select_position');
+      }
+    }
+  );
+
+  socket.on(
+    'join_discussion_room',
+    ({ roomId, userId }: { roomId: string; userId: string }) => {
+      console.log(`${userId}가 토론 룸 ${roomId}에 join 시도`);
       const room = rooms.find((r) => r.roomId === roomId);
       if (room) {
         const player = room.players.find((p) => p.userId === userId);
         if (player) {
-          player.position = position;
-          io.to(roomId).emit('room_update', room);
+          // 플레이어의 소켓 ID를 현재 소켓으로 업데이트
+          player.socketId = socket.id;
+          socket.join(roomId);
+          console.log(
+            `${player.displayname}이 토론 룸에 join 완료, 새 소켓 ID: ${socket.id}`
+          );
+        }
+      }
+    }
+  );
 
-          // 클라이언트에 입장 선택 확인 전송
-          socket.emit('position_selected', { position });
+  socket.on(
+    'discussion_view_ready',
+    ({ roomId, userId }: { roomId: string; userId: string }) => {
+      const room = rooms.find((r) => r.roomId === roomId);
+      if (room && room.battleStarted) {
+        const player = room.players.find((p) => p.userId === userId);
+        if (player) {
+          // 플레이어를 discussionView 준비 완료로 표시
+          player.discussionViewReady = true;
+          console.log(`${player.displayname}이 discussionView 준비 완료`);
+
+          // 두 플레이어 모두 준비되었는지 확인
+          const allPlayersReady = room.players.every(
+            (p) => p.discussionViewReady
+          );
+
+          if (allPlayersReady) {
+            console.log('모든 플레이어가 discussionView 준비 완료, 토론 시작');
+            // battleHandlers의 통합된 토론 시작 로직 사용
+            startBattleLogic(io, room);
+          }
         }
       }
     }

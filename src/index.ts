@@ -58,6 +58,8 @@ const onConnection = (socket: Socket) => {
   registerRoomHandlers(io, socket);
   registerBattleHandlers(io, socket);
 
+  console.log(`소켓 ${socket.id}에 핸들러 등록 완료`);
+
   socket.on('disconnect', () => {
     console.log(`클라이언트 연결 해제됨: ${socket.id}`);
     // Handle cleanup when a user disconnects, e.g., leave rooms
