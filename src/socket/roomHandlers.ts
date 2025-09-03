@@ -26,18 +26,18 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
     // Try database first, fallback to hardcoded data if it fails
     try {
       const { data, error } = await supabase.from('subjects').select('*');
-      console.log('주제 쿼리 결과:', { data, error });
+      // console.log('주제 쿼리 결과:', { data, error });
 
       if (error) {
         console.error('주제 가져오기 오류:', error);
-        console.log('대체 하드코딩된 주제를 사용합니다...');
+        // console.log('대체 하드코딩된 주제를 사용합니다...');
 
-        console.log('클라이언트에 대체 주제를 전송합니다:', fallbackSubjects);
+        // console.log('클라이언트에 대체 주제를 전송합니다:', fallbackSubjects);
         callback({ subjects: fallbackSubjects });
         return;
       }
 
-      console.log('클라이언트에 주제를 전송합니다:', data);
+      // console.log('클라이언트에 주제를 전송합니다:', data);
       callback({ subjects: data });
     } catch (err) {
       console.error('데이터베이스 연결 실패, 대체 주제를 사용합니다:', err);

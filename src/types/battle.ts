@@ -33,7 +33,7 @@ export interface AIEvaluationResult {
 
 export interface BattleState {
   [roomId: string]: {
-    stage: number; // 0-8 단계
+    stage: number; // 0-10 단계
     discussionLog: DiscussionLogEntry[];
     players: Player[];
     subject: Subject;

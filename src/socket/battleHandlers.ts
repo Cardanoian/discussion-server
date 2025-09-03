@@ -19,14 +19,17 @@ const calculateEloRating = (
   won: boolean
 ): number => {
   // K값 결정 (레이팅에 따라 차등 적용)
-  let kFactor: number;
-  if (playerRating < 2100) {
-    kFactor = 32;
-  } else if (playerRating < 2400) {
-    kFactor = 16;
-  } else {
-    kFactor = 10;
-  }
+  const kFactor: number =
+    35.0115796 / (1 + Math.exp((playerRating - 1930.63327881) / 240.64853294)) +
+    9.99989887;
+  // let kFactor:number;
+  // if (playerRating < 2100) {
+  //   kFactor = 32;
+  // } else if (playerRating < 2400) {
+  //   kFactor = 16;
+  // } else {
+  //   kFactor = 10;
+  // }
 
   // 예상 승률 계산
   const expectedScore =
@@ -117,9 +120,10 @@ const saveBattleResult = async (
 
     if (error) {
       console.error('경기 결과 저장 오류:', error);
-    } else {
-      console.log('경기 결과가 성공적으로 저장되었습니다.');
     }
+    // else {
+    //   console.log('경기 결과가 성공적으로 저장되었습니다.');
+    // }
   } catch (error) {
     console.error('경기 결과 저장 중 오류:', error);
   }
@@ -194,10 +198,12 @@ ${room.subject.text}
 2. 반대측 대표발언  
 3. 반대측 질문
 4. 찬성측 답변 및 질문
-5. 반대측 답변
-6. 찬성측 최종발언
-7. 반대측 최종발언
-8. AI 심판 평가
+5. 반대측 답변 및 질문
+6. 찬성측 답변 및 질문
+7. 반대측 답변
+8. 찬성측 최종발언
+9. 반대측 최종발언
+10. AI 심판 평가
 
 그럼 먼저 찬성측인 ${finalAgreePlayer.displayname}님부터 대표발언을 시작해주세요.`;
 
@@ -209,7 +215,7 @@ ${room.subject.text}
 
     // 1단계로 진행 - 찬성측 대표발언
     battleStates[roomId].stage = 1;
-    console.log('1단계 진행 - 찬성측 대표발언');
+    // console.log('1단계 진행 - 찬성측 대표발언');
     io.to(roomId).emit('turn_info', {
       currentPlayerId: finalAgreePlayer.userId,
       stage: 1,
@@ -297,14 +303,16 @@ ${room.subject.text}
 2. 반대측 대표발언  
 3. 반대측 질문
 4. 찬성측 답변 및 질문
-5. 반대측 답변
-6. 찬성측 최종발언
-7. 반대측 최종발언
-8. AI 심판 평가
+5. 반대측 답변 및 질문
+6. 찬성측 답변 및 질문
+7. 반대측 답변
+8. 찬성측 최종발언
+9. 반대측 최종발언
+10. AI 심판 평가
 
 그럼 먼저 찬성측인 ${finalAgreePlayer.displayname}님부터 대표발언을 시작해주세요.`;
 
-      console.log('AI 심판 메시지 전송:', openingMessage);
+      // console.log('AI 심판 메시지 전송:', openingMessage);
       io.to(roomId).emit('ai_judge_message', {
         message: openingMessage,
         stage: 0,
@@ -312,7 +320,7 @@ ${room.subject.text}
 
       // 1단계로 진행 - 찬성측 대표발언
       battleStates[roomId].stage = 1;
-      console.log('1단계 진행 - 찬성측 대표발언');
+      // console.log('1단계 진행 - 찬성측 대표발언');
       io.to(roomId).emit('turn_info', {
         currentPlayerId: finalAgreePlayer.userId,
         stage: 1,
@@ -406,38 +414,56 @@ const proceedToNextStage = async (
       });
       break;
 
-    case 5: // 반대측 답변
+    case 5: // 반대측 답변 및 질문
       io.to(roomId).emit('turn_info', {
         currentPlayerId: state.disagreePlayer.userId,
         stage: 5,
+        message: `반대측 ${state.disagreePlayer.displayname}님이 답변하고 질문해주세요.`,
+        stageDescription: '반대측 답변 및 질문',
+      });
+      break;
+
+    case 6: // 찬성측 답변 및 질문
+      io.to(roomId).emit('turn_info', {
+        currentPlayerId: state.agreePlayer.userId,
+        stage: 6,
+        message: `찬성측 ${state.agreePlayer.displayname}님이 답변하고 질문해주세요.`,
+        stageDescription: '찬성측 답변 및 질문',
+      });
+      break;
+
+    case 7: // 반대측 답변
+      io.to(roomId).emit('turn_info', {
+        currentPlayerId: state.disagreePlayer.userId,
+        stage: 7,
         message: `반대측 ${state.disagreePlayer.displayname}님의 답변 차례입니다.`,
         stageDescription: '반대측 답변',
       });
       break;
 
-    case 6: // 찬성측 최종발언
+    case 8: // 찬성측 최종발언
       io.to(roomId).emit('ai_judge_message', {
         message: `이제 최종발언 단계입니다. 찬성측 ${state.agreePlayer.displayname}님부터 최종발언을 해주세요.`,
-        stage: 6,
+        stage: 8,
       });
       io.to(roomId).emit('turn_info', {
         currentPlayerId: state.agreePlayer.userId,
-        stage: 6,
+        stage: 8,
         message: `찬성측 ${state.agreePlayer.displayname}님의 최종발언 차례입니다.`,
         stageDescription: '찬성측 최종발언',
       });
       break;
 
-    case 7: // 반대측 최종발언
+    case 9: // 반대측 최종발언
       io.to(roomId).emit('turn_info', {
         currentPlayerId: state.disagreePlayer.userId,
-        stage: 7,
+        stage: 9,
         message: `반대측 ${state.disagreePlayer.displayname}님의 최종발언 차례입니다.`,
         stageDescription: '반대측 최종발언',
       });
       break;
 
-    case 8: // AI 심판 평가
+    case 10: // AI 심판 평가
       await conductAIEvaluation(io, roomId, state);
       break;
 
@@ -454,7 +480,7 @@ const conductAIEvaluation = async (
 ) => {
   io.to(roomId).emit('ai_judge_message', {
     message: '토론이 종료되었습니다. AI가 채점을 시작합니다...',
-    stage: 8,
+    stage: 10,
   });
 
   try {
@@ -531,11 +557,13 @@ ${disagreeMessages}
 
 예시: "이번 토론에서 찬성측은 85점, 반대측은 78점을 받았습니다. 
 
-찬성측은 체계적인 논리 구조와 구체적인 통계 자료를 바탕으로 한 근거 제시가 매우 뛰어났습니다. 특히 상대방의 반박에 대해 차분하고 논리적으로 대응하는 모습이 인상적이었습니다. 다만 감정적 호소나 청중과의 공감대 형성 부분에서는 다소 아쉬움이 있었고, 일부 주장에서 반대 의견에 대한 충분한 고려가 부족했습니다.
+찬성측은 체계적인 논리 구조와 구체적인 통계 자료를 바탕으로 한 근거 제시가 매우 뛰어났습니다. 
+다만 감정적 호소나 청중과의 공감대 형성 부분에서는 다소 아쉬움이 있었고, 일부 주장에서 반대 의견에 대한 충분한 고려가 부족했습니다.
 
-반대측은 실제 사례와 생생한 경험담을 효과적으로 활용하여 설득력 있는 주장을 펼쳤습니다. 청중의 감정에 호소하는 능력이 뛰어났고, 상대방의 약점을 정확히 파악하여 공격하는 전략적 사고도 돋보였습니다. 하지만 논리적 연결성이 다소 부족했고, 일부 주장에서 근거가 약하거나 감정에만 의존하는 경향이 있었습니다.
+반대측은 실제 사례와 생생한 경험담을 효과적으로 활용하여 설득력 있는 주장을 펼쳤습니다. 
+하지만 논리적 연결성이 다소 부족했고, 일부 주장에서 근거가 약하거나 감정에만 의존하는 경향이 있었습니다.
 
-종합적으로 판단했을 때, 논리적 일관성과 근거의 타당성 면에서 우위를 보인 찬성측이 승리했습니다."
+종합적으로 판단했을 때, 논리적 일관성과 근거의 타당성 면에서 우위를 보인 찬성측이 85대 78로 승리했습니다."
 
 위와 같이 각 측의 점수, 구체적인 잘한 점과 개선점을 자세히 설명하고, 최종 승부 결과와 그 이유를 명확히 제시하는 형식으로 작성해주세요.
     `;
@@ -555,7 +583,7 @@ ${disagreeMessages}
     // 심판 메시지로 줄글 결과 전송
     io.to(roomId).emit('ai_judge_message', {
       message: resultText,
-      stage: 8,
+      stage: 10,
     });
 
     // 기존 battle_result 이벤트도 유지 (DB 저장용)
