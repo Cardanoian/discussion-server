@@ -12,7 +12,7 @@ dotenv.config();
 // Test Supabase connection on startup
 const testSupabaseConnection = async () => {
   try {
-    console.log('Supabase 연결 테스트 중...');
+    // console.log('Supabase 연결 테스트 중...');
     const { error } = await supabase.from('subjects').select('count');
     if (error) {
       console.error('Supabase 연결 오류:', error);
@@ -29,9 +29,9 @@ const testSupabaseConnection = async () => {
         console.log(
           `데이터베이스에서 ${subjects?.length || 0}개의 주제를 찾았습니다.`
         );
-        if (subjects && subjects.length > 0) {
-          console.log('샘플 주제:', subjects[0]);
-        }
+        //   if (subjects && subjects.length > 0) {
+        //     console.log('샘플 주제:', subjects[0]);
+        //   }
       }
     }
   } catch (err) {
@@ -57,6 +57,8 @@ const onConnection = (socket: Socket) => {
 
   registerRoomHandlers(io, socket);
   registerBattleHandlers(io, socket);
+
+  // console.log(`소켓 ${socket.id}에 핸들러 등록 완료`);
 
   socket.on('disconnect', () => {
     console.log(`클라이언트 연결 해제됨: ${socket.id}`);
