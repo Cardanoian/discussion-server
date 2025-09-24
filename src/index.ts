@@ -42,14 +42,43 @@ const testSupabaseConnection = async () => {
 testSupabaseConnection();
 
 const app = express();
-app.use(cors());
+
+// CORS 설정 개선
+const corsOptions = {
+  origin:
+    process.env.NODE_ENV === 'production'
+      ? process.env.FRONTEND_URL || 'https://your-frontend-domain.com'
+      : [
+          'http://129.154.48.207/',
+          'http://localhost:3000',
+          'http://localhost:5173',
+          'http://127.0.0.1:3000',
+          'http://127.0.0.1:5173',
+        ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+};
+
+app.use(cors(corsOptions));
+
+// 기본 라우트 추가
+app.get('/', (req, res) => {
+  res.json({
+    message: 'Discussion Server is running!',
+    version: '1.0.0',
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// Health check 엔드포인트
+app.get('/health', (req, res) => {
+  res.json({ status: 'OK', uptime: process.uptime() });
+});
 
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: {
-    origin: '*', // In production, you should restrict this to your frontend's URL
-    methods: ['GET', 'POST'],
-  },
+  cors: corsOptions,
 });
 
 const onConnection = (socket: Socket) => {
