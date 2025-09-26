@@ -4,6 +4,12 @@ import { supabase } from '../supabaseClient';
 
 const router = express.Router();
 
+// 메시지 타입 정의
+interface DiscussionMessage {
+  sender: 'pro' | 'con' | string;
+  text: string;
+}
+
 // Gemini API 클라이언트 초기화
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 if (!GEMINI_API_KEY) {
@@ -237,6 +243,212 @@ A3: [답변3]
       console.error('AI 질문/답변 생성 오류:', error);
       res.status(500).json({
         error: 'AI 질문/답변 생성에 실패했습니다. 다시 시도해주세요.',
+      });
+    }
+  }
+);
+
+// 토론 도움 생성 API
+router.post(
+  '/generate-discussion-help',
+  authenticateUser,
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const {
+        subject,
+        userPosition,
+        currentStage,
+        stageDescription,
+        discussionLog,
+        userReasons,
+        userQuestions,
+        userRating = 1500,
+      } = req.body;
+
+      if (!subject || !userPosition || !currentStage || !stageDescription) {
+        return res.status(400).json({
+          error: '필수 파라미터가 누락되었습니다.',
+        });
+      }
+
+      if (!GEMINI_API_KEY) {
+        return res
+          .status(500)
+          .json({ error: 'Gemini API 키가 설정되지 않았습니다.' });
+      }
+
+      // 언어 수준 가이드라인 함수 (간단한 버전)
+      const getLanguageLevelPrompt = (rating: number) => {
+        if (rating < 1200) {
+          return '- 간단하고 이해하기 쉬운 표현을 사용하세요\n- 복잡한 논리보다는 직관적인 설명을 우선하세요';
+        } else if (rating < 1500) {
+          return '- 적당한 수준의 논리적 표현을 사용하세요\n- 기본적인 근거와 예시를 포함하세요';
+        } else {
+          return '- 논리적이고 체계적인 표현을 사용하세요\n- 깊이 있는 분석과 반박을 포함하세요';
+        }
+      };
+
+      // 토론 로그를 읽기 쉽게 정리
+      const formattedLog =
+        discussionLog
+          ?.filter(
+            (msg: DiscussionMessage) =>
+              msg.sender === 'pro' || msg.sender === 'con'
+          )
+          .map((msg: DiscussionMessage) => {
+            const speaker = msg.sender === 'pro' ? '찬성측' : '반대측';
+            return `${speaker}: ${msg.text}`;
+          })
+          .join('\n') || '';
+
+      // 상대방의 마지막 발언 추출
+      const opponentSender = userPosition === 'agree' ? 'con' : 'pro';
+      const lastOpponentMessage =
+        discussionLog
+          ?.filter((msg: DiscussionMessage) => msg.sender === opponentSender)
+          .slice(-1)[0]?.text || '';
+
+      // 단계별 전략 안내 및 응답 형식 결정
+      const getStageInfo = (stage: number) => {
+        switch (stage) {
+          case 1:
+          case 2:
+            return {
+              strategy:
+                stage === 1
+                  ? '대표발언 단계입니다. 핵심 주장을 명확하고 강력하게 제시하세요.'
+                  : '대표발언 단계입니다. 상대방 주장의 약점을 파악하며 자신의 입장을 명확히 하세요.',
+              responseType: 'answer_only',
+            };
+          case 3:
+            return {
+              strategy:
+                '질문 단계입니다. 상대방 주장과 근거의 허점을 파고드는 질문을 하세요.',
+              responseType: 'question_only',
+            };
+          case 4:
+          case 5:
+          case 6:
+            return {
+              strategy:
+                '답변 및 질문 단계입니다. 상대방 질문에 논리적으로 답변하고 상대방 주장과 근거의 허점을 파고드는 질문을 하세요.',
+              responseType: 'answer_and_question',
+            };
+          case 7:
+            return {
+              strategy:
+                '답변 단계입니다. 상대방 질문에 설득력 있게 답변하세요.',
+              responseType: 'answer_only',
+            };
+          case 8:
+          case 9:
+            return {
+              strategy:
+                '최종발언 단계입니다. 지금까지의 논의를 정리하고 강력한 마무리를 하세요.',
+              responseType: 'answer_only',
+            };
+          default:
+            return {
+              strategy: '현재 상황에 맞는 적절한 응답을 하세요.',
+              responseType: 'answer_only',
+            };
+        }
+      };
+
+      const stageInfo = getStageInfo(currentStage);
+      const languageLevelGuide = getLanguageLevelPrompt(userRating);
+
+      // 단계별 프롬프트 생성
+      let prompt = `
+토론 주제: "${subject}"
+당신의 입장: ${userPosition === 'agree' ? '찬성' : '반대'}
+현재 단계: ${stageDescription} (${currentStage}단계)
+단계별 전략: ${stageInfo.strategy}
+
+당신이 미리 준비한 근거들:
+${
+  userReasons
+    ?.map((reason: string, index: number) => `${index + 1}. ${reason}`)
+    .join('\n') || ''
+}
+
+당신이 미리 준비한 예상 질문과 답변:
+${
+  userQuestions
+    ?.map(
+      (qa: { q: string; a: string }, index: number) =>
+        `Q${index + 1}: ${qa.q}\nA${index + 1}: ${qa.a}`
+    )
+    .join('\n\n') || ''
+}
+
+현재까지의 토론 내용:
+${formattedLog}
+
+상대방의 마지막 발언: "${lastOpponentMessage}"
+
+위 정보를 바탕으로, 현재 단계에 맞는 효과적인 응답을 작성해주세요.
+
+기본 요구사항:
+1. 당신의 입장(${userPosition === 'agree' ? '찬성' : '반대'})에서 응답하세요
+2. 현재 단계(${stageDescription})의 목적에 맞게 작성하세요
+3. 미리 준비한 근거나 예상 답변을 바탕으로 대답하세요
+4. 상대방의 마지막 발언에 대한 적절한 대응을 포함하세요
+5. 논리적이고 설득력 있게 작성하세요
+6. 감정적이지 않고 객관적인 톤을 유지하세요
+
+말투 및 표현 가이드라인:
+- 청소년이 자연스럽게 사용할 수 있는 높임말을 사용하세요
+- 극존칭이나 과도하게 격식적인 표현은 피하세요
+- 듣는이를 지칭하는 표현을 절대 사용하지 마세요 (예: "존경하는 찬성측 토론자분들께", "토론자 여러분", "~분들께" 등 금지)
+- 상대방을 직접 호명하거나 지칭하는 표현도 피하세요
+- 자연스럽고 친근한 톤을 유지하되 논리적 근거는 명확히 제시하세요
+
+언어 수준 및 논리적 복잡성 가이드라인:
+${languageLevelGuide}
+`;
+
+      // 단계별 응답 형식 추가
+      if (stageInfo.responseType === 'question_only') {
+        prompt += `
+
+응답 형식: 질문만 작성
+- 상대방 주장의 약점을 파고드는 날카로운 질문 한 문장을 작성하세요
+- "답변:" 없이 질문만 작성하세요
+- 질문은 상대방이 답변하기 어려운 핵심적인 내용이어야 합니다`;
+      } else if (stageInfo.responseType === 'answer_and_question') {
+        prompt += `
+
+응답 형식: 답변 + 질문
+- 먼저 상대방의 질문이나 주장에 대한 답변을 한 문장으로 작성하세요
+- 그 다음 줄바꿈 후 상대방에게 할 질문을 한 문장으로 작성하세요
+- 형식: "[답변 내용]\n[질문 내용]"
+- 답변과 질문 모두 간결하고 명확하게 작성하세요`;
+      } else {
+        prompt += `
+
+응답 형식: 답변만 작성
+- 상대방의 주장이나 질문에 대한 답변을 한 문장으로 작성하세요
+- 질문 없이 답변만 작성하세요`;
+      }
+
+      const response = await genAI.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: prompt,
+        config: { thinkingConfig: { thinkingBudget: 0 } },
+      });
+
+      const suggestion = response.text?.trim() || '';
+
+      if (!suggestion) {
+        return res.status(500).json({ error: 'AI 응답을 받을 수 없습니다.' });
+      }
+
+      res.json({ suggestion });
+    } catch (error) {
+      console.error('AI 토론 도움 요청 오류:', error);
+      res.status(500).json({
+        error: 'AI 도움 요청 처리 중 오류가 발생했습니다.',
       });
     }
   }
