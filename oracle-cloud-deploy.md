@@ -74,7 +74,7 @@ PORT=3050
 SUPABASE_URL=""
 SUPABASE_ANON_KEY=""
 GEMINI_API_KEY=""
-FRONTEND_URL=http://129.154.48.207/
+FRONTEND_URL=https://debate.gbeai.net/
 ```
 
 ## 4. PM2로 서버 시작
