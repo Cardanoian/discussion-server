@@ -63,7 +63,7 @@ npm run build
 ```bash
 # .env 파일 생성
 cp .env.example .env
-nano .env
+vi .env
 ```
 
 **.env 파일 내용:**

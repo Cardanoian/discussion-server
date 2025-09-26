@@ -6,6 +6,7 @@ import dotenv from 'dotenv';
 import { registerRoomHandlers } from './socket/roomHandlers';
 import { registerBattleHandlers } from './socket/battleHandlers';
 import { supabase } from './supabaseClient';
+import geminiRouter from './routes/gemini';
 
 dotenv.config();
 
@@ -64,6 +65,10 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
+app.use(express.json());
+
+// API 라우터 연결
+app.use('/api/gemini', geminiRouter);
 
 // 기본 라우트 추가
 app.get('/', (req, res) => {
