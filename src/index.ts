@@ -105,7 +105,7 @@ const onConnection = (socket: Socket) => {
 
 io.on('connection', onConnection);
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3050;
 server.listen(PORT, () =>
   console.log(`서버가 포트 ${PORT}에서 수신 중입니다.`)
 );

@@ -12,6 +12,7 @@ const createRoom = (roomId: string, subject: Subject): BattleRoom => ({
   players: [],
   isFull: false,
   battleStarted: false,
+  hasReferee: false,
 });
 
 export const registerRoomHandlers = (io: Server, socket: Socket) => {
@@ -89,11 +90,19 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
         }
 
         const newRoom = createRoom(roomId, subjectData);
+
+        // 역할 결정: 관리자면 심판, 아니면 플레이어
+        const role = userData.is_admin ? 'referee' : 'player';
+        if (role === 'referee') {
+          newRoom.hasReferee = true;
+        }
+
         newRoom.players.push({
           socketId: socket.id,
           userId,
           displayname: userData.display_name,
           isReady: false,
+          role,
           rating: userData.rating,
           wins: userData.wins,
           loses: userData.loses,
@@ -128,7 +137,8 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
       }
 
       const room = rooms.find((r) => r.roomId === roomId);
-      if (room && !room.isFull) {
+      if (room && !room.battleStarted) {
+        // isFull 조건 제거 - 무제한 참여
         try {
           // 사용자 정보 가져오기
           const { data: userData, error: userError } = await supabase
@@ -143,24 +153,30 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
             return;
           }
 
+          // 역할 결정: 플레이어 수에 따라 결정
+          const playerCount = room.players.filter(
+            (p) => p.role === 'player'
+          ).length;
+          const role = playerCount < 2 ? 'player' : 'spectator';
+
           room.players.push({
             socketId: socket.id,
             userId,
             displayname: userData.display_name,
             isReady: false,
+            role,
             rating: userData.rating,
             wins: userData.wins,
             loses: userData.loses,
           });
           socket.join(roomId);
-          if (room.players.length === 2) {
-            room.isFull = true;
-          }
+
+          // 플레이어 수가 2명 이상이면 토론 시작 가능 (isFull 로직 제거)
           callback({ room });
           io.to(roomId).emit('room_update', room);
           io.emit(
             'rooms_update',
-            rooms.filter((r) => !r.isFull && !r.battleStarted)
+            rooms.filter((r) => !r.battleStarted) // isFull 조건 제거
           );
         } catch (error) {
           console.error('방 참가 오류:', error);
@@ -170,13 +186,13 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
         }
       } else {
         requestManager.finishProcessing(socket.id, 'join_room');
-        callback({ error: '방을 찾을 수 없거나 가득 찼습니다.' });
+        callback({ error: '방을 찾을 수 없거나 이미 시작되었습니다.' });
       }
     }
   );
 
   socket.on('get_rooms', (callback) => {
-    callback({ rooms: rooms.filter((r) => !r.isFull && !r.battleStarted) });
+    callback({ rooms: rooms.filter((r) => !r.battleStarted) }); // isFull 조건 제거
   });
 
   socket.on(
@@ -195,21 +211,93 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
             player.isReady = !player.isReady;
             io.to(roomId).emit('room_update', room);
 
-            if (
-              room.players.length === 2 &&
-              room.players.every((p) => p.isReady)
-            ) {
+            // 플레이어 역할인 사람이 2명 이상이고 모두 준비되었는지 확인
+            // 관전자와 심판은 준비 완료 상태와 관계없이 토론 시작 가능
+            const players = room.players.filter((p) => p.role === 'player');
+            const readyPlayers = players.filter((p) => p.isReady);
+
+            if (players.length >= 2 && readyPlayers.length >= 2) {
+              // 최소 2명의 플레이어가 준비되면 토론 시작
               room.battleStarted = true;
               io.to(roomId).emit('battle_start', room);
               io.emit(
                 'rooms_update',
-                rooms.filter((r) => !r.isFull && !r.battleStarted)
+                rooms.filter((r) => !r.battleStarted)
               );
             }
           }
         }
       } finally {
         requestManager.finishProcessing(socket.id, 'player_ready');
+      }
+    }
+  );
+
+  // 역할 선택 핸들러 추가
+  socket.on(
+    'select_role',
+    async ({
+      roomId,
+      userId,
+      role,
+    }: {
+      roomId: string;
+      userId: string;
+      role: 'player' | 'spectator' | 'referee';
+    }) => {
+      // 중복 요청 방지
+      if (!requestManager.startProcessing(socket.id, 'select_role')) {
+        return;
+      }
+
+      try {
+        const room = rooms.find((r) => r.roomId === roomId);
+        if (room) {
+          const player = room.players.find((p) => p.userId === userId);
+          if (player) {
+            // 심판 역할 선택 시 관리자 권한 확인
+            if (role === 'referee') {
+              const { data: userData, error: userError } = await supabase
+                .from('user_profile')
+                .select('is_admin')
+                .eq('user_uuid', userId)
+                .single();
+
+              if (userError || !userData || !userData.is_admin) {
+                socket.emit('role_select_error', {
+                  error: '심판 권한이 없습니다.',
+                });
+                return;
+              }
+            }
+
+            // 기존 심판이 다른 역할로 변경하는 경우
+            if (player.role === 'referee' && role !== 'referee') {
+              room.hasReferee = room.players.some(
+                (p) => p.userId !== userId && p.role === 'referee'
+              );
+            }
+            // 새로 심판이 되는 경우
+            else if (role === 'referee') {
+              room.hasReferee = true;
+            }
+
+            player.role = role;
+            // 역할이 변경되면 입장과 준비 상태 초기화
+            player.position = undefined;
+            player.isReady = false;
+
+            io.to(roomId).emit('room_update', room);
+            socket.emit('role_selected', { role });
+          }
+        }
+      } catch (error) {
+        console.error('역할 선택 오류:', error);
+        socket.emit('role_select_error', {
+          error: '역할 선택 중 오류가 발생했습니다.',
+        });
+      } finally {
+        requestManager.finishProcessing(socket.id, 'select_role');
       }
     }
   );
@@ -223,7 +311,7 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
     }: {
       roomId: string;
       userId: string;
-      position: 'agree' | 'disagree';
+      position: 'agree' | 'disagree' | null;
     }) => {
       // 중복 요청 방지
       if (!requestManager.startProcessing(socket.id, 'select_position')) {
@@ -234,12 +322,18 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
         const room = rooms.find((r) => r.roomId === roomId);
         if (room) {
           const player = room.players.find((p) => p.userId === userId);
-          if (player) {
-            player.position = position;
-            io.to(roomId).emit('room_update', room);
+          if (player && player.role === 'player') {
+            // 플레이어만 입장 선택 가능
+            // 같은 입장을 다시 선택하면 취소
+            if (player.position === position) {
+              player.position = undefined;
+              player.isReady = false;
+            } else {
+              player.position = position === null ? undefined : position;
+            }
 
-            // 클라이언트에 입장 선택 확인 전송
-            socket.emit('position_selected', { position });
+            io.to(roomId).emit('room_update', room);
+            socket.emit('position_selected', { position: player.position });
           }
         }
       } finally {
@@ -284,9 +378,55 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
           );
 
           if (allPlayersReady) {
-            // console.log('모든 플레이어가 discussionView 준비 완료, 토론 시작');
-            // battleHandlers의 통합된 토론 시작 로직 사용
-            startBattleLogic(io, room);
+            // console.log('모든 플레이어가 discussionView 준비 완료, 역할 할당 후 토론 시작');
+
+            // 토론 시작 전에 플레이어 역할과 입장을 확정
+            const playerRolePlayers = room.players.filter(
+              (p) => p.role === 'player'
+            );
+
+            // 플레이어가 2명 이상이고 입장이 설정되지 않은 경우 자동 할당
+            if (playerRolePlayers.length >= 2) {
+              const playersWithoutPosition = playerRolePlayers.filter(
+                (p) => !p.position
+              );
+
+              if (playersWithoutPosition.length > 0) {
+                // 입장이 없는 플레이어들에게 자동으로 입장 할당
+                const availablePositions: ('agree' | 'disagree')[] = [];
+
+                const hasAgree = playerRolePlayers.some(
+                  (p) => p.position === 'agree'
+                );
+                const hasDisagree = playerRolePlayers.some(
+                  (p) => p.position === 'disagree'
+                );
+
+                if (!hasAgree) availablePositions.push('agree');
+                if (!hasDisagree) availablePositions.push('disagree');
+
+                // 입장이 없는 플레이어들에게 순서대로 할당
+                playersWithoutPosition.forEach((player, index) => {
+                  if (index < availablePositions.length) {
+                    player.position = availablePositions[index];
+                  }
+                });
+              }
+            }
+
+            // 플레이어 목록 업데이트 이벤트를 토론 시작 전에 전송
+            io.to(roomId).emit('player_list_updated', {
+              players: room.players.map((p) => ({
+                userId: p.userId,
+                role: p.role,
+                position: p.position,
+              })),
+            });
+
+            // 잠시 대기 후 토론 시작 (클라이언트가 역할 정보를 처리할 시간 제공)
+            setTimeout(() => {
+              startBattleLogic(io, room);
+            }, 500);
           }
         }
       }
@@ -305,13 +445,14 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
         if (room.players.length === 0) {
           rooms.splice(roomIndex, 1);
         } else {
-          room.isFull = false;
           room.players.forEach((p) => (p.isReady = false));
+          // 심판이 나갔는지 확인
+          room.hasReferee = room.players.some((p) => p.role === 'referee');
           io.to(roomId).emit('room_update', room);
         }
         io.emit(
           'rooms_update',
-          rooms.filter((r) => !r.isFull && !r.battleStarted)
+          rooms.filter((r) => !r.battleStarted)
         );
       }
     }

@@ -2,11 +2,20 @@ import express from 'express';
 import { GoogleGenAI } from '@google/genai';
 import { supabase } from '../supabaseClient';
 
+// Express Request 타입 확장
+declare global {
+  namespace Express {
+    interface Request {
+      user?: any;
+    }
+  }
+}
+
 const router = express.Router();
 
 // 메시지 타입 정의
 interface DiscussionMessage {
-  sender: 'pro' | 'con' | string;
+  sender: 'agree' | 'disagree' | string;
   text: string;
 }
 
@@ -293,16 +302,16 @@ router.post(
         discussionLog
           ?.filter(
             (msg: DiscussionMessage) =>
-              msg.sender === 'pro' || msg.sender === 'con'
+              msg.sender === 'agree' || msg.sender === 'disagree'
           )
           .map((msg: DiscussionMessage) => {
-            const speaker = msg.sender === 'pro' ? '찬성측' : '반대측';
+            const speaker = msg.sender === 'agree' ? '찬성측' : '반대측';
             return `${speaker}: ${msg.text}`;
           })
           .join('\n') || '';
 
       // 상대방의 마지막 발언 추출
-      const opponentSender = userPosition === 'agree' ? 'con' : 'pro';
+      const opponentSender = userPosition === 'agree' ? 'disagree' : 'agree';
       const lastOpponentMessage =
         discussionLog
           ?.filter((msg: DiscussionMessage) => msg.sender === opponentSender)

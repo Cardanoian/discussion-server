@@ -6,15 +6,23 @@ export interface Player {
   displayname: string;
   isReady: boolean;
   position?: 'agree' | 'disagree';
+  role: 'player' | 'spectator' | 'referee';
   rating: number;
   wins: number;
   loses: number;
+  discussionViewReady?: boolean;
 }
 
 export interface DiscussionLogEntry {
   userId: string;
   message: string;
   stage: number;
+}
+
+export interface MessageEntry {
+  sender: 'system' | 'judge' | 'agree' | 'disagree';
+  text: string;
+  timestamp?: number;
 }
 
 export interface AIEvaluationResult {
@@ -44,6 +52,7 @@ export interface BattleState {
   [roomId: string]: {
     stage: number; // 0-10 단계
     discussionLog: DiscussionLogEntry[];
+    messages: MessageEntry[]; // 모든 메시지 (시스템, 심판, 플레이어)
     players: Player[];
     subject: Subject;
     agreePlayer: Player;
@@ -58,5 +67,8 @@ export interface BattleState {
     penaltyPoints: number; // 감점 점수 (3점)
     maxPenaltyPoints: number; // 18점 (자동 패배 기준)
     isGameEndedByPenalty: boolean; // 감점으로 인한 게임 종료 여부
+    serverTimerInterval?: NodeJS.Timeout; // 서버 타이머 인터벌
+    aiEvaluationResult?: AIEvaluationResult; // AI 채점 결과
+    humanRefereeScores?: { agree: number; disagree: number }; // 인간 심판 점수
   };
 }

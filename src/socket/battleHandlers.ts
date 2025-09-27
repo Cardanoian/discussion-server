@@ -1,301 +1,47 @@
+import { BattleState, MessageEntry } from '../types/battle';
 import { Server, Socket } from 'socket.io';
 import { GoogleGenAI } from '@google/genai';
-import { supabase } from '../supabaseClient';
 import { BattleRoom } from '../types/database';
 import {
-  AIEvaluationResult,
-  BattleState,
-  DiscussionLogEntry,
-} from '../types/battle';
+  startTurnTimer,
+  updatePlayerTime,
+  checkTimeLimit,
+  handleTimeOverflow,
+  handleAutomaticDefeat,
+} from '../utils/timeUtils';
+import { calculateCombinedScore } from '../utils/calculateCombinedScore';
+import { saveBattleResult } from '../utils/saveBattleResult';
+import { updateUserStats } from '../utils/updateUserStats';
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 
-const battleStates: BattleState = {};
+export const battleStates: BattleState = {};
 
-// 타이머 관리 함수들
-const startTurnTimer = (roomId: string, userId: string) => {
-  const state = battleStates[roomId];
-  if (!state) return;
-
-  state.currentTurnStartTime = Date.now();
-  state.timers[userId].roundTimeUsed = 0;
-  state.timers[userId].isOvertime = false;
-
-  // console.log(
-  //   `턴 타이머 시작: ${userId}, 시작 시간: ${state.currentTurnStartTime}`
-  // );
-};
-
-const calculateTimeUsed = (
-  roomId: string,
-  userId: string
-): { roundTime: number; totalTime: number } => {
-  const state = battleStates[roomId];
-  if (!state || !state.currentTurnStartTime)
-    return { roundTime: 0, totalTime: 0 };
-
-  const currentTime = Date.now();
-  const roundTimeUsed = currentTime - state.currentTurnStartTime;
-  const totalTimeUsed = state.timers[userId].totalTimeUsed + roundTimeUsed;
-
-  return { roundTime: roundTimeUsed, totalTime: totalTimeUsed };
-};
-
-const checkTimeLimit = (
+// 메시지를 서버 상태에 추가하고 클라이언트에 브로드캐스트하는 헬퍼 함수
+const addMessage = (
   io: Server,
   roomId: string,
-  userId: string
-): boolean => {
-  const state = battleStates[roomId];
-  if (!state) return false;
-
-  const { roundTime, totalTime } = calculateTimeUsed(roomId, userId);
-  const playerTimer = state.timers[userId];
-
-  // 라운드 시간 초과 체크
-  if (roundTime > state.roundTimeLimit && !playerTimer.isOvertime) {
-    handleTimeOverflow(io, roomId, userId, 'round');
-    return true;
-  }
-
-  // 전체 시간 초과 체크
-  if (totalTime > state.totalTimeLimit && !playerTimer.isOvertime) {
-    handleTimeOverflow(io, roomId, userId, 'total');
-    return true;
-  }
-
-  return false;
-};
-
-const handleTimeOverflow = (
-  io: Server,
-  roomId: string,
-  userId: string,
-  type: 'round' | 'total'
+  sender: 'system' | 'judge' | 'agree' | 'disagree',
+  text: string
 ) => {
   const state = battleStates[roomId];
   if (!state) return;
 
-  const playerTimer = state.timers[userId];
-  const playerName =
-    state.players.find((p) => p.userId === userId)?.displayname || '플레이어';
-
-  // 3점 감점
-  playerTimer.penaltyPoints += state.penaltyPoints;
-  playerTimer.penaltyCount += 1;
-  playerTimer.isOvertime = true;
-  playerTimer.overtimeStarted = Date.now();
-
-  // console.log(
-  //   `시간 초과 처리: ${userId}, 감점: ${playerTimer.penaltyPoints}/${state.maxPenaltyPoints}`
-  // );
-
-  // 18점 이상 시 자동 패배
-  if (playerTimer.penaltyPoints >= state.maxPenaltyPoints) {
-    handleAutomaticDefeat(io, roomId, userId);
-    return;
-  }
-
-  // 감점 알림
-  const timeType = type === 'round' ? '라운드' : '전체';
-  io.to(roomId).emit('penalty_applied', {
-    userId,
-    penaltyPoints: playerTimer.penaltyPoints,
-    maxPenaltyPoints: state.maxPenaltyPoints,
-    message: `${playerName}님이 ${timeType} 시간을 초과하여 3점 감점되었습니다. (${playerTimer.penaltyPoints}/${state.maxPenaltyPoints}점)`,
-  });
-
-  // 30초 연장시간 부여
-  io.to(roomId).emit('overtime_granted', {
-    userId,
-    overtimeLimit: state.overtimeLimit,
-    message: `${playerName}님에게 30초의 연장시간이 부여되었습니다.`,
-  });
-};
-
-const handleAutomaticDefeat = (
-  io: Server,
-  roomId: string,
-  defeatedUserId: string
-) => {
-  const state = battleStates[roomId];
-  if (!state) return;
-
-  const defeatedPlayer = state.players.find((p) => p.userId === defeatedUserId);
-  const winnerId = state.players.find(
-    (p) => p.userId !== defeatedUserId
-  )?.userId;
-
-  if (!winnerId || !defeatedPlayer) return;
-
-  // 게임 즉시 종료
-  state.isGameEndedByPenalty = true;
-
-  // console.log(`자동 패배 처리: ${defeatedUserId} 패배, ${winnerId} 승리`);
-
-  // 패배 메시지 전송
-  io.to(roomId).emit('ai_judge_message', {
-    message: `시간 초과로 인한 감점이 18점에 도달했습니다. ${defeatedPlayer.displayname}님의 패배로 경기가 종료됩니다.`,
-    stage: 11, // 특별 종료 단계
-  });
-
-  // 자동 승부 결과 처리 (AI 심판 없이)
-  const automaticResult: AIEvaluationResult = {
-    agree: {
-      score: winnerId === state.agreePlayer.userId ? 100 : 0,
-      good: '시간 관리 우수',
-      bad: '',
-    },
-    disagree: {
-      score: winnerId === state.disagreePlayer.userId ? 100 : 0,
-      good: '시간 관리 우수',
-      bad: '',
-    },
-    winner: winnerId,
+  const message: MessageEntry = {
+    sender,
+    text,
+    timestamp: Date.now(),
   };
 
-  // 결과 전송 및 통계 업데이트
-  io.to(roomId).emit('battle_result', automaticResult);
+  // 중복 메시지 방지
+  const isDuplicate = state.messages.some(
+    (msg) => msg.sender === sender && msg.text === text
+  );
 
-  // 비동기 처리
-  (async () => {
-    await updateUserStats(winnerId, defeatedUserId, true);
-    await updateUserStats(defeatedUserId, winnerId, false);
-
-    // battles 테이블에 결과 저장
-    await saveBattleResult(
-      state.agreePlayer.userId,
-      state.disagreePlayer.userId,
-      winnerId,
-      state.subject.uuid,
-      state.discussionLog,
-      automaticResult
-    );
-  })();
-
-  // 상태 정리
-  delete battleStates[roomId];
-};
-
-const updatePlayerTime = (roomId: string, userId: string) => {
-  const state = battleStates[roomId];
-  if (!state || !state.currentTurnStartTime) return;
-
-  const { roundTime, totalTime } = calculateTimeUsed(roomId, userId);
-  const playerTimer = state.timers[userId];
-
-  playerTimer.roundTimeUsed = roundTime;
-  playerTimer.totalTimeUsed = totalTime;
-
-  // console.log(
-  //   `시간 업데이트: ${userId}, 라운드: ${roundTime}ms, 전체: ${totalTime}ms`
-  // );
-};
-
-// ELO 레이팅 계산 함수
-const calculateEloRating = (
-  playerRating: number,
-  opponentRating: number,
-  won: boolean
-): number => {
-  // K값 결정 (레이팅에 따라 차등 적용)
-  const kFactor: number =
-    35.0115796 / (1 + Math.exp((playerRating - 1930.63327881) / 240.64853294)) +
-    9.99989887;
-
-  // 예상 승률 계산
-  const expectedScore =
-    1 / (1 + Math.pow(10, (opponentRating - playerRating) / 400));
-
-  // 실제 결과 (승리: 1, 패배: 0)
-  const actualScore = won ? 1 : 0;
-
-  // 새로운 레이팅 계산
-  const newRating = playerRating + kFactor * (actualScore - expectedScore);
-
-  return newRating;
-};
-
-// 사용자 통계 업데이트 함수
-const updateUserStats = async (
-  userId: string,
-  opponentId: string,
-  won: boolean
-) => {
-  try {
-    // 현재 사용자 정보 가져오기
-    const { data: userData, error: userError } = await supabase
-      .from('user_profile')
-      .select('rating, wins, loses')
-      .eq('user_uuid', userId)
-      .single();
-
-    const { data: opponentData, error: opponentError } = await supabase
-      .from('user_profile')
-      .select('rating')
-      .eq('user_uuid', opponentId)
-      .single();
-
-    if (userError || !userData || opponentError || !opponentData) {
-      console.error('사용자 정보 가져오기 오류:', userError || opponentError);
-      return;
-    }
-
-    // 새로운 ELO 레이팅 계산
-    const newRating = calculateEloRating(
-      userData.rating,
-      opponentData.rating,
-      won
-    );
-
-    // 승패 카운트 업데이트
-    const updates = {
-      rating: newRating,
-      wins: userData.wins + (won ? 1 : 0),
-      loses: userData.loses + (won ? 0 : 1),
-    };
-
-    await supabase.from('user_profile').update(updates).eq('user_uuid', userId);
-
-    console.log(
-      `${userId} 레이팅 업데이트: ${userData.rating} → ${newRating} (${
-        won ? '승리' : '패배'
-      })`
-    );
-  } catch (error) {
-    console.error('사용자 통계 업데이트 오류:', error);
-  }
-};
-
-// battles 테이블에 경기 결과 저장
-const saveBattleResult = async (
-  agreePlayerId: string,
-  disagreePlayerId: string,
-  winnerId: string,
-  subjectId: string,
-  discussionLog: DiscussionLogEntry[],
-  aiResult: AIEvaluationResult
-) => {
-  try {
-    const battleData = {
-      player1_uuid: agreePlayerId, // 찬성측
-      player2_uuid: disagreePlayerId, // 반대측
-      subject_id: subjectId,
-      winner_uuid: winnerId,
-      log: JSON.stringify(discussionLog),
-      result: JSON.stringify(aiResult),
-    };
-
-    const { error } = await supabase.from('battles').insert([battleData]);
-
-    if (error) {
-      console.error('경기 결과 저장 오류:', error);
-    }
-    // else {
-    //   console.log('경기 결과가 성공적으로 저장되었습니다.');
-    // }
-  } catch (error) {
-    console.error('경기 결과 저장 중 오류:', error);
+  if (!isDuplicate) {
+    state.messages.push(message);
+    // 전체 메시지 목록을 클라이언트에 전송
+    io.to(roomId).emit('messages_updated', state.messages);
   }
 };
 
@@ -348,6 +94,7 @@ export const startBattleLogic = async (io: Server, room: BattleRoom) => {
     battleStates[roomId] = {
       stage: 0,
       discussionLog: [],
+      messages: [], // 모든 메시지 저장
       players: room.players,
       subject: room.subject,
       agreePlayer: finalAgreePlayer,
@@ -399,20 +146,21 @@ ${room.subject.text}
 
 그럼 먼저 찬성측인 ${finalAgreePlayer.displayname}님부터 대표발언을 시작해주세요.`;
 
-    // console.log('AI 심판 메시지 전송:', openingMessage);
-    io.to(roomId).emit('ai_judge_message', {
-      message: openingMessage,
-      stage: 0,
-    });
+    // 서버에서 메시지 관리 - AI 심판 메시지 추가
+    addMessage(io, roomId, 'judge', openingMessage);
 
     // 1단계로 진행 - 찬성측 대표발언
     battleStates[roomId].stage = 1;
-    startTurnTimer(roomId, finalAgreePlayer.userId);
+    startTurnTimer(io, roomId, finalAgreePlayer.userId);
+
+    const turnMessage = `찬성측 ${finalAgreePlayer.displayname}님의 대표발언 차례입니다.`;
+    addMessage(io, roomId, 'system', turnMessage);
+
     // console.log('1단계 진행 - 찬성측 대표발언');
     io.to(roomId).emit('turn_info', {
       currentPlayerId: finalAgreePlayer.userId,
       stage: 1,
-      message: `찬성측 ${finalAgreePlayer.displayname}님의 대표발언 차례입니다.`,
+      message: turnMessage,
       stageDescription: '찬성측 대표발언',
     });
   } catch (error) {
@@ -476,6 +224,7 @@ export const registerBattleHandlers = (io: Server, socket: Socket) => {
       battleStates[roomId] = {
         stage: 0,
         discussionLog: [],
+        messages: [], // 모든 메시지 저장
         players: room.players,
         subject: room.subject,
         agreePlayer: finalAgreePlayer,
@@ -533,13 +282,27 @@ ${room.subject.text}
         stage: 0,
       });
 
+      // 플레이어 목록 업데이트 이벤트 전송 (클라이언트 역할 할당용)
+      io.to(roomId).emit('player_list_updated', {
+        players: room.players.map((p) => ({
+          userId: p.userId,
+          role: p.role,
+          position: p.position,
+        })),
+      });
+
       // 1단계로 진행 - 찬성측 대표발언
       battleStates[roomId].stage = 1;
+      startTurnTimer(io, roomId, finalAgreePlayer.userId);
+
+      const turnMessage = `찬성측 ${finalAgreePlayer.displayname}님의 대표발언 차례입니다.`;
+      addMessage(io, roomId, 'system', turnMessage);
+
       // console.log('1단계 진행 - 찬성측 대표발언');
       io.to(roomId).emit('turn_info', {
         currentPlayerId: finalAgreePlayer.userId,
         stage: 1,
-        message: `찬성측 ${finalAgreePlayer.displayname}님의 대표발언 차례입니다.`,
+        message: turnMessage,
         stageDescription: '찬성측 대표발언',
       });
     } catch (error) {
@@ -589,9 +352,9 @@ ${room.subject.text}
       // 메시지 로그에 추가
       state.discussionLog.push({ userId, message, stage: state.stage });
 
-      // 메시지 브로드캐스트
-      const sender = userId === state.agreePlayer.userId ? 'pro' : 'con';
-      io.to(roomId).emit('new_message', { userId, message, sender });
+      // 서버에서 메시지 관리 - 플레이어 메시지 추가
+      const sender = userId === state.agreePlayer.userId ? 'agree' : 'disagree';
+      addMessage(io, roomId, sender, message);
 
       // 다음 단계로 진행
       await proceedToNextStage(io, roomId, state);
@@ -627,6 +390,269 @@ ${room.subject.text}
       );
     }
   );
+
+  // 심판 조작 기능들
+  socket.on(
+    'referee_add_points',
+    ({
+      roomId,
+      targetUserId,
+      points,
+      refereeId,
+    }: {
+      roomId: string;
+      targetUserId: string;
+      points: number;
+      refereeId: string;
+    }) => {
+      const state = battleStates[roomId];
+      if (!state) return;
+
+      // 심판 권한 확인
+      const referee = state.players.find(
+        (p) => p.userId === refereeId && p.role === 'referee'
+      );
+      if (!referee) return;
+
+      const targetPlayer = state.players.find((p) => p.userId === targetUserId);
+      if (!targetPlayer) return;
+
+      // 가산점 적용 (감점 점수 감소)
+      const playerTimer = state.timers[targetUserId];
+      if (playerTimer) {
+        playerTimer.penaltyPoints = Math.max(
+          0,
+          playerTimer.penaltyPoints - points
+        );
+
+        io.to(roomId).emit('penalty_applied', {
+          userId: targetUserId,
+          penaltyPoints: playerTimer.penaltyPoints,
+          maxPenaltyPoints: state.maxPenaltyPoints,
+          message: `인간심판이 ${
+            targetPlayer.position == 'agree' ? '찬성' : '반대'
+          }측 플레이어 ${
+            targetPlayer.displayname
+          }님에게 ${points}점의 가산점을 부여했습니다. (${
+            playerTimer.penaltyPoints
+          }/${state.maxPenaltyPoints}점)`,
+        });
+      }
+    }
+  );
+
+  // 인간 심판 채점 제출
+  socket.on(
+    'referee_submit_scores',
+    async ({
+      roomId,
+      scores,
+      refereeId,
+    }: {
+      roomId: string;
+      scores: { agree: number; disagree: number };
+      refereeId: string;
+    }) => {
+      const state = battleStates[roomId];
+      if (!state) return;
+
+      // 심판 권한 확인
+      const referee = state.players.find(
+        (p) => p.userId === refereeId && p.role === 'referee'
+      );
+      if (!referee) return;
+
+      // 인간 심판 점수 저장
+      state.humanRefereeScores = scores;
+
+      // AI 채점 결과와 통합하여 최종 결과 계산
+      if (state.aiEvaluationResult) {
+        const finalResult = calculateCombinedScore(
+          state.aiEvaluationResult,
+          scores
+        );
+
+        // 최종 결과 전송
+        io.to(roomId).emit('battle_result', finalResult);
+
+        const winnerId = finalResult.winner;
+        const loserId = state.players.find(
+          (p) => p.userId !== winnerId
+        )?.userId;
+
+        // 사용자 통계 업데이트
+        if (winnerId && loserId) {
+          await updateUserStats(winnerId, loserId, true);
+          await updateUserStats(loserId, winnerId, false);
+        }
+
+        // battles 테이블에 결과 저장
+        await saveBattleResult(
+          state.agreePlayer.userId,
+          state.disagreePlayer.userId,
+          winnerId,
+          state.subject.uuid,
+          state.discussionLog,
+          finalResult
+        );
+
+        // 상태 정리
+        delete battleStates[roomId];
+      }
+    }
+  );
+
+  socket.on(
+    'referee_deduct_points',
+    ({
+      roomId,
+      targetUserId,
+      points,
+      refereeId,
+    }: {
+      roomId: string;
+      targetUserId: string;
+      points: number;
+      refereeId: string;
+    }) => {
+      const state = battleStates[roomId];
+      if (!state) return;
+
+      // 심판 권한 확인
+      const referee = state.players.find(
+        (p) => p.userId === refereeId && p.role === 'referee'
+      );
+      if (!referee) return;
+
+      const targetPlayer = state.players.find((p) => p.userId === targetUserId);
+      if (!targetPlayer) return;
+
+      // 감점 적용
+      const playerTimer = state.timers[targetUserId];
+      if (playerTimer) {
+        playerTimer.penaltyPoints = Math.min(
+          state.maxPenaltyPoints,
+          playerTimer.penaltyPoints + points
+        );
+
+        // 18점 이상 시 자동 패배
+        if (playerTimer.penaltyPoints >= state.maxPenaltyPoints) {
+          handleAutomaticDefeat(io, roomId, targetUserId);
+          return;
+        }
+
+        io.to(roomId).emit('penalty_applied', {
+          userId: targetUserId,
+          penaltyPoints: playerTimer.penaltyPoints,
+          maxPenaltyPoints: state.maxPenaltyPoints,
+          message: `심판이 ${
+            targetPlayer.position === 'agree' ? '찬성' : '반대'
+          }측 플레이어 ${
+            targetPlayer.displayname
+          }님에게 ${points}점의 감점을 부여했습니다. (${
+            playerTimer.penaltyPoints
+          }/${state.maxPenaltyPoints}점)`,
+        });
+      }
+    }
+  );
+
+  socket.on(
+    'referee_extend_time',
+    ({
+      roomId,
+      targetUserId,
+      seconds,
+      refereeId,
+    }: {
+      roomId: string;
+      targetUserId: string;
+      seconds: number;
+      refereeId: string;
+    }) => {
+      const state = battleStates[roomId];
+      if (!state) return;
+
+      // 심판 권한 확인
+      const referee = state.players.find(
+        (p) => p.userId === refereeId && p.role === 'referee'
+      );
+      if (!referee) return;
+
+      const targetPlayer = state.players.find((p) => p.userId === targetUserId);
+      if (!targetPlayer) return;
+
+      // 시간 연장 (전체 시간 증가)
+      const playerTimer = state.timers[targetUserId];
+      if (playerTimer) {
+        playerTimer.totalTimeUsed = Math.max(
+          0,
+          playerTimer.totalTimeUsed - seconds * 1000
+        );
+
+        io.to(roomId).emit('time_extended', {
+          userId: targetUserId,
+          seconds,
+          message: `심판이 ${
+            targetPlayer.position === 'agree' ? '찬성' : '반대'
+          }측 플레이어 ${
+            targetPlayer.displayname
+          }님에게 ${seconds}초 시간을 연장해주었습니다.`,
+        });
+      }
+    }
+  );
+
+  socket.on(
+    'referee_reduce_time',
+    ({
+      roomId,
+      targetUserId,
+      seconds,
+      refereeId,
+    }: {
+      roomId: string;
+      targetUserId: string;
+      seconds: number;
+      refereeId: string;
+    }) => {
+      const state = battleStates[roomId];
+      if (!state) return;
+
+      // 심판 권한 확인
+      const referee = state.players.find(
+        (p) => p.userId === refereeId && p.role === 'referee'
+      );
+      if (!referee) return;
+
+      const targetPlayer = state.players.find((p) => p.userId === targetUserId);
+      if (!targetPlayer) return;
+
+      // 시간 단축 (전체 시간 감소)
+      const playerTimer = state.timers[targetUserId];
+      if (playerTimer) {
+        playerTimer.totalTimeUsed += seconds * 1000;
+
+        io.to(roomId).emit('time_reduced', {
+          userId: targetUserId,
+          seconds,
+          message: `심판이 ${
+            targetPlayer.position === 'agree' ? '찬성' : '반대'
+          }측 플레이어 ${
+            targetPlayer.displayname
+          }님의 시간을 ${seconds}초 단축했습니다.`,
+        });
+      }
+    }
+  );
+
+  // 클라이언트가 메시지 목록을 요청하는 핸들러
+  socket.on('get_messages', ({ roomId }: { roomId: string }) => {
+    const state = battleStates[roomId];
+    if (state) {
+      socket.emit('messages_updated', state.messages);
+    }
+  });
 };
 
 // 다음 단계로 진행하는 함수
@@ -639,7 +665,7 @@ const proceedToNextStage = async (
 
   switch (state.stage) {
     case 2: // 반대측 대표발언
-      startTurnTimer(roomId, state.disagreePlayer.userId);
+      startTurnTimer(io, roomId, state.disagreePlayer.userId);
       io.to(roomId).emit('turn_info', {
         currentPlayerId: state.disagreePlayer.userId,
         stage: 2,
@@ -649,7 +675,7 @@ const proceedToNextStage = async (
       break;
 
     case 3: // 반대측 질문
-      startTurnTimer(roomId, state.disagreePlayer.userId);
+      startTurnTimer(io, roomId, state.disagreePlayer.userId);
       io.to(roomId).emit('ai_judge_message', {
         message: `이제 질문 단계입니다. 반대측 ${state.disagreePlayer.displayname}님이 찬성측에게 질문해주세요.`,
         stage: 3,
@@ -663,7 +689,7 @@ const proceedToNextStage = async (
       break;
 
     case 4: // 찬성측 답변 및 질문
-      startTurnTimer(roomId, state.agreePlayer.userId);
+      startTurnTimer(io, roomId, state.agreePlayer.userId);
       io.to(roomId).emit('turn_info', {
         currentPlayerId: state.agreePlayer.userId,
         stage: 4,
@@ -673,7 +699,7 @@ const proceedToNextStage = async (
       break;
 
     case 5: // 반대측 답변 및 질문
-      startTurnTimer(roomId, state.disagreePlayer.userId);
+      startTurnTimer(io, roomId, state.disagreePlayer.userId);
       io.to(roomId).emit('turn_info', {
         currentPlayerId: state.disagreePlayer.userId,
         stage: 5,
@@ -683,7 +709,7 @@ const proceedToNextStage = async (
       break;
 
     case 6: // 찬성측 답변 및 질문
-      startTurnTimer(roomId, state.agreePlayer.userId);
+      startTurnTimer(io, roomId, state.agreePlayer.userId);
       io.to(roomId).emit('turn_info', {
         currentPlayerId: state.agreePlayer.userId,
         stage: 6,
@@ -693,7 +719,7 @@ const proceedToNextStage = async (
       break;
 
     case 7: // 반대측 답변
-      startTurnTimer(roomId, state.disagreePlayer.userId);
+      startTurnTimer(io, roomId, state.disagreePlayer.userId);
       io.to(roomId).emit('turn_info', {
         currentPlayerId: state.disagreePlayer.userId,
         stage: 7,
@@ -703,7 +729,7 @@ const proceedToNextStage = async (
       break;
 
     case 8: // 찬성측 최종발언
-      startTurnTimer(roomId, state.agreePlayer.userId);
+      startTurnTimer(io, roomId, state.agreePlayer.userId);
       io.to(roomId).emit('ai_judge_message', {
         message: `이제 최종발언 단계입니다. 찬성측 ${state.agreePlayer.displayname}님부터 최종발언을 해주세요.`,
         stage: 8,
@@ -717,7 +743,7 @@ const proceedToNextStage = async (
       break;
 
     case 9: // 반대측 최종발언
-      startTurnTimer(roomId, state.disagreePlayer.userId);
+      startTurnTimer(io, roomId, state.disagreePlayer.userId);
       io.to(roomId).emit('turn_info', {
         currentPlayerId: state.disagreePlayer.userId,
         stage: 9,
@@ -776,13 +802,13 @@ ${disagreeMessages}
 {
   "agree": {
     "score": 점수(0-100),
-    "good": "잘한 점에 대한 상세한 설명",
-    "bad": "개선점에 대한 상세한 설명"
+    "good": "잘한 점에 대한 간단한 설명",
+    "bad": "개선점에 대한 간단한 설명"
   },
   "disagree": {
     "score": 점수(0-100),
-    "good": "잘한 점에 대한 상세한 설명", 
-    "bad": "개선점에 대한 상세한 설명"
+    "good": "잘한 점에 대한 간단한 설명", 
+    "bad": "개선점에 대한 간단한 설명"
   },
   "winner": "${state.agreePlayer.userId}" 또는 "${state.disagreePlayer.userId}"
 }
@@ -849,30 +875,48 @@ ${disagreeMessages}
       stage: 10,
     });
 
-    // 기존 battle_result 이벤트도 유지 (DB 저장용)
-    io.to(roomId).emit('battle_result', resultJson);
+    // AI 채점 결과 저장
+    state.aiEvaluationResult = resultJson;
 
-    const winnerId = resultJson.winner;
-    const loserId = state.players.find((p) => p.userId !== winnerId)?.userId;
+    // 인간 심판이 있는지 확인
+    const hasHumanReferee = state.players.some((p) => p.role === 'referee');
 
-    // 사용자 통계 업데이트
-    if (winnerId && loserId) {
-      await updateUserStats(winnerId, loserId, true);
-      await updateUserStats(loserId, winnerId, false);
+    if (hasHumanReferee) {
+      // 인간 심판이 있으면 채점 모달 표시 요청
+      const referee = state.players.find((p) => p.role === 'referee');
+      if (referee) {
+        io.to(referee.socketId).emit('show_referee_score_modal', {
+          agreePlayerName: state.agreePlayer.displayname,
+          disagreePlayerName: state.disagreePlayer.displayname,
+          aiResult: resultJson,
+        });
+      }
+    } else {
+      // 인간 심판이 없으면 AI 결과만으로 종료
+      io.to(roomId).emit('battle_result', resultJson);
+
+      const winnerId = resultJson.winner;
+      const loserId = state.players.find((p) => p.userId !== winnerId)?.userId;
+
+      // 사용자 통계 업데이트
+      if (winnerId && loserId) {
+        await updateUserStats(winnerId, loserId, true);
+        await updateUserStats(loserId, winnerId, false);
+      }
+
+      // battles 테이블에 결과 저장
+      await saveBattleResult(
+        state.agreePlayer.userId,
+        state.disagreePlayer.userId,
+        winnerId,
+        state.subject.uuid,
+        state.discussionLog,
+        resultJson
+      );
+
+      // 상태 정리
+      delete battleStates[roomId];
     }
-
-    // battles 테이블에 결과 저장
-    await saveBattleResult(
-      state.agreePlayer.userId,
-      state.disagreePlayer.userId,
-      winnerId,
-      state.subject.uuid,
-      state.discussionLog,
-      resultJson
-    );
-
-    // 상태 정리
-    delete battleStates[roomId];
   } catch (error) {
     console.error('AI 평가 오류:', error);
     io.to(roomId).emit('battle_error', 'AI 채점 중 오류가 발생했습니다.');

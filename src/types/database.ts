@@ -4,6 +4,7 @@ export type UserProfile = {
   rating: number;
   wins: number;
   loses: number;
+  is_admin: boolean;
 };
 
 export type Doc = {
@@ -36,6 +37,7 @@ export type BattleRoom = {
     displayname: string;
     isReady: boolean;
     position?: 'agree' | 'disagree'; // 찬성/반대 입장 추가
+    role: 'player' | 'spectator' | 'referee'; // 역할 추가
     discussionViewReady?: boolean; // discussionView 준비 상태 추가
     rating: number;
     wins: number;
@@ -44,6 +46,7 @@ export type BattleRoom = {
   subject: Subject | null;
   isFull: boolean;
   battleStarted: boolean;
+  hasReferee: boolean;
 };
 
 export type DiscussionMessage = {
