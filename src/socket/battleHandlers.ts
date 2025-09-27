@@ -288,6 +288,7 @@ ${room.subject.text}
           userId: p.userId,
           role: p.role,
           position: p.position,
+          displayName: p.displayname, // displayname 추가
         })),
       });
 
