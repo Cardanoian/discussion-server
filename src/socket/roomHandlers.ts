@@ -97,16 +97,22 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
           newRoom.hasReferee = true;
         }
 
-        newRoom.players.push({
-          socketId: socket.id,
-          userId,
-          displayname: userData.display_name,
-          isReady: false,
-          role,
-          rating: userData.rating,
-          wins: userData.wins,
-          loses: userData.loses,
-        });
+        // 동일 userId가 이미 있으면 socketId만 갱신, 없으면 push
+        const existingPlayer = newRoom.players.find((p) => p.userId === userId);
+        if (existingPlayer) {
+          existingPlayer.socketId = socket.id;
+        } else {
+          newRoom.players.push({
+            socketId: socket.id,
+            userId,
+            displayname: userData.display_name,
+            isReady: false,
+            role,
+            rating: userData.rating,
+            wins: userData.wins,
+            loses: userData.loses,
+          });
+        }
         rooms.push(newRoom);
         socket.join(roomId);
         callback({ room: newRoom });
@@ -138,7 +144,6 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
 
       const room = rooms.find((r) => r.roomId === roomId);
       if (room && !room.battleStarted) {
-        // isFull 조건 제거 - 무제한 참여
         try {
           // 사용자 정보 가져오기
           const { data: userData, error: userError } = await supabase
@@ -159,24 +164,30 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
           ).length;
           const role = playerCount < 2 ? 'player' : 'spectator';
 
-          room.players.push({
-            socketId: socket.id,
-            userId,
-            displayname: userData.display_name,
-            isReady: false,
-            role,
-            rating: userData.rating,
-            wins: userData.wins,
-            loses: userData.loses,
-          });
+          // 동일 userId가 이미 있으면 socketId만 갱신, 없으면 push
+          const existingPlayer = room.players.find((p) => p.userId === userId);
+          if (existingPlayer) {
+            existingPlayer.socketId = socket.id;
+          } else {
+            room.players.push({
+              socketId: socket.id,
+              userId,
+              displayname: userData.display_name,
+              isReady: false,
+              role,
+              rating: userData.rating,
+              wins: userData.wins,
+              loses: userData.loses,
+            });
+          }
           socket.join(roomId);
 
-          // 플레이어 수가 2명 이상이면 토론 시작 가능 (isFull 로직 제거)
+          // 플레이어 수가 2명 이상이면 토론 시작 가능
           callback({ room });
           io.to(roomId).emit('room_update', room);
           io.emit(
             'rooms_update',
-            rooms.filter((r) => !r.battleStarted) // isFull 조건 제거
+            rooms.filter((r) => !r.battleStarted)
           );
         } catch (error) {
           console.error('방 참가 오류:', error);
@@ -192,7 +203,19 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
   );
 
   socket.on('get_rooms', (callback) => {
-    callback({ rooms: rooms.filter((r) => !r.battleStarted) }); // isFull 조건 제거
+    callback({ rooms: rooms.filter((r) => !r.battleStarted) });
+  });
+
+  // 내가 들어가 있는 방 반환
+  socket.on('get_my_room', ({ userId }, callback) => {
+    const myRoom = rooms.find((room) =>
+      room.players.some((p) => p.userId === userId)
+    );
+    if (myRoom) {
+      callback({ room: myRoom });
+    } else {
+      callback({ room: null });
+    }
   });
 
   socket.on(
