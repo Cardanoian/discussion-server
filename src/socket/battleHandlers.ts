@@ -811,7 +811,7 @@ ${disagreeMessages}
     "good": "잘한 점에 대한 간단한 설명", 
     "bad": "개선점에 대한 간단한 설명"
   },
-  "winner": "${state.agreePlayer.userId}" 또는 "${state.disagreePlayer.userId}"
+  "winner": "agree" 또는 "disagree"
 }
     `;
 
@@ -827,6 +827,19 @@ ${disagreeMessages}
 
     const text = response.text ?? '';
     const resultJson = JSON.parse(text.replace(/```json|```/g, '').trim());
+
+    // winner 필드가 position("agree"/"disagree")으로 반환된 경우 userId로 변환
+    if (
+      resultJson.winner === 'agree' ||
+      resultJson.winner === state.agreePlayer.userId
+    ) {
+      resultJson.winner = state.agreePlayer.userId;
+    } else if (
+      resultJson.winner === 'disagree' ||
+      resultJson.winner === state.disagreePlayer.userId
+    ) {
+      resultJson.winner = state.disagreePlayer.userId;
+    }
 
     // JSON 결과를 자연스러운 줄글로 변환
     const textPrompt = `

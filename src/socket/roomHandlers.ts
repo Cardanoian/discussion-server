@@ -208,13 +208,82 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
 
   // 내가 들어가 있는 방 반환
   socket.on('get_my_room', ({ userId }, callback) => {
+    console.log('get_my_room 요청:', { userId, totalRooms: rooms.length });
+
     const myRoom = rooms.find((room) =>
       room.players.some((p) => p.userId === userId)
     );
+
     if (myRoom) {
+      console.log('방 찾음:', {
+        roomId: myRoom.roomId,
+        battleStarted: myRoom.battleStarted,
+        playersCount: myRoom.players.length,
+        players: myRoom.players.map((p) => ({
+          userId: p.userId,
+          role: p.role,
+          position: p.position,
+        })),
+      });
       callback({ room: myRoom });
     } else {
+      console.log(
+        '방을 찾을 수 없음. 현재 방 목록:',
+        rooms.map((r) => ({
+          roomId: r.roomId,
+          players: r.players.map((p) => p.userId),
+        }))
+      );
       callback({ room: null });
+    }
+  });
+
+  // 사용자 프로필 정보 반환
+  socket.on('get_user_profile', async ({ userId }, callback) => {
+    console.log('get_user_profile 요청:', userId);
+
+    try {
+      const { data: profile, error } = await supabase
+        .from('user_profile')
+        .select('*')
+        .eq('user_uuid', userId)
+        .single();
+
+      if (error && error.code !== 'PGRST116') {
+        console.error('사용자 프로필 조회 오류:', error);
+        callback({ userProfile: null, error: error.message });
+        return;
+      }
+
+      if (profile) {
+        console.log('사용자 프로필 조회 성공:', profile);
+        callback({ userProfile: profile, error: null });
+      } else {
+        // 프로필이 없으면 기본 프로필 생성
+        console.log('프로필이 없어서 새로 생성:', userId);
+        const { data: newProfile, error: createError } = await supabase
+          .from('user_profile')
+          .insert({
+            user_uuid: userId,
+            display_name: null,
+            rating: 1500,
+            wins: 0,
+            loses: 0,
+          })
+          .select()
+          .single();
+
+        if (createError) {
+          console.error('사용자 프로필 생성 오류:', createError);
+          callback({ userProfile: null, error: createError.message });
+        } else {
+          console.log('새 사용자 프로필 생성 성공:', newProfile);
+          callback({ userProfile: newProfile, error: null });
+        }
+      }
+    } catch (error) {
+      console.error('사용자 프로필 처리 중 오류:', error);
+      callback({ userProfile: null, error: String(error) });
     }
   });
 
