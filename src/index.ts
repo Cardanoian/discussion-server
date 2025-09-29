@@ -87,6 +87,11 @@ app.get('/health', (req, res) => {
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: corsOptions,
+  path: '/socket.io/',
+  transports: ['websocket', 'polling'],
+  allowEIO3: true,
+  pingTimeout: 60000,
+  pingInterval: 25000,
 });
 
 const onConnection = (socket: Socket) => {
