@@ -58,11 +58,11 @@ const authenticateUser = async (
 
 // 근거 생성 API
 router.post(
-  '/generate-arguments',
+  '/generate-argument',
   authenticateUser,
   async (req: express.Request, res: express.Response) => {
     try {
-      const { subject, existingReasons, isAgainst } = req.body;
+      const { agreement, subject, existingReasons } = req.body;
 
       if (!subject) {
         return res.status(400).json({ error: '토론 주제가 필요합니다.' });
@@ -76,12 +76,12 @@ router.post(
 
       const existingReasonsText =
         existingReasons?.filter((r: string) => r.trim()).join('\n- ') || '';
-      const positionText = isAgainst ? '반대' : '찬성';
+      const positionText = agreement ? '찬성' : '반대';
 
       const prompt = `
 토론 주제: "${subject}"
 
-이 주제에 대한 ${positionText} 입장에서 강력한 논리적 근거 3개를 제시해주세요.
+이 주제에 대한 ${positionText} 입장에서 강력한 논리적 근거 1개를 한 문장으로 제시해주세요.
 ${
   existingReasonsText
     ? `\n기존 근거:\n- ${existingReasonsText}\n\n기존 근거와 중복되지 않는 새로운 근거를 제시해주세요.`
@@ -100,9 +100,8 @@ ${
 - 듣는이를 지칭하는 표현을 절대 사용하지 마세요 (예: "존경하는 토론자분들께", "여러분" 등 금지)
 
 응답 형식: 
-- 각 근거를 별도의 줄로 구분하여 작성해주세요. 
 - 마크다운 형식을 사용하지 말고, 단순 텍스트로 작성해주세요.
-- 각 근거의 시작에 '.'과 같은 표시를 절대 달지 말아주세요.
+- 근거의 시작에 '.'과 같은 표시를 절대 달지 말아주세요.
 - 근거는 반드시 짧고 간단히 한 문장으로 짧게 적어주세요.
 `;
 
@@ -117,16 +116,7 @@ ${
         return res.status(500).json({ error: 'AI 응답을 받을 수 없습니다.' });
       }
 
-      // 응답을 줄 단위로 분리하고 빈 줄 제거
-      const generatedArguments = text
-        .trim()
-        .split('\n')
-        .map((line: string) => line.trim())
-        .filter((line: string) => line && !line.match(/^[\d\-*•]\s*$/))
-        .map((line: string) => line.replace(/^[\d\-*•]\s*/, '').trim())
-        .filter((line: string) => line.length > 10); // 너무 짧은 줄 제거
-
-      res.json({ arguments: generatedArguments.slice(0, 3) });
+      res.json({ argument: text.trim() });
     } catch (error) {
       console.error('AI 근거 생성 오류:', error);
       res
@@ -138,16 +128,37 @@ ${
 
 // 질문/답변 생성 API
 router.post(
-  '/generate-questions',
+  '/generate-question',
   authenticateUser,
   async (req: express.Request, res: express.Response) => {
+    interface qa {
+      q: string;
+      a: string;
+    }
     try {
-      const { subject, reasons, existingQuestions } = req.body;
+      const {
+        agreement,
+        subject,
+        reasons,
+        existingQuestions,
+      }: {
+        agreement: boolean;
+        subject: string;
+        reasons: string[];
+        existingQuestions: qa[];
+      } = req.body;
 
       if (!subject || !reasons || !Array.isArray(reasons)) {
         return res
           .status(400)
           .json({ error: '토론 주제와 근거가 필요합니다.' });
+      }
+
+      // existingQuestions 검증 추가
+      if (existingQuestions && !Array.isArray(existingQuestions)) {
+        return res
+          .status(400)
+          .json({ error: '기존 질문 형식이 올바르지 않습니다.' });
       }
 
       if (!GEMINI_API_KEY) {
@@ -168,11 +179,12 @@ router.post(
       const prompt = `
 토론 주제: "${subject}"
 
-내 주장 근거:
+내 입장: ${agreement ? '찬성' : '반대'}
+
+내 근거:
 - ${reasonsText}
 
-위 주장에 대해 상대방이 제기할 수 있는 예상 질문 3개와 각각에 대한 효과적인 답변을 작성해주세요. 
-마크다운 형식을 사용하지 말고, 단순 텍스트로 작성해주세요.
+위 주장, 나의 입장과 나의 근거들에 대해 상대방이 제기할 수 있는 예상 질문 효과적인 답변 1쌍을 JSON 형식으로 작성해주세요.
 
 ${
   existingQuestionsText
@@ -180,11 +192,11 @@ ${
     : ''
 }
 
-각 질문은:
+생성할 질문은:
 - 상대방이 실제로 제기할 가능성이 높은 반박이나 의문점
-- 내 주장의 약점을 파고드는 날카로운 질문
+- 내 주장과 근거의 약점을 파고드는 날카로운 질문
 
-각 답변은:
+생성할 질문에 대한 답변은:
 - 질문에 대한 논리적이고 설득력 있는 응답을 반드시 짧고 간단히 한 문장으로 작성
 - 구체적인 근거나 사례는 포함하지 않음
 - 상대방을 납득시킬 수 있는 내용
@@ -195,14 +207,10 @@ ${
 - 듣는이를 지칭하는 표현을 절대 사용하지 마세요 (예: "존경하는 토론자분들께", "여러분" 등 금지)
 
 응답 형식:
-Q1: [질문1]
-A1: [답변1]
+{ q: [질문], a: [답변] }
 
-Q2: [질문2]
-A2: [답변2]
-
-Q3: [질문3]
-A3: [답변3]
+출력 예시:
+{ q: '친구 물건에 손을 안댄다고 친구가 많아지는 것은 아니지 않나요?', a: '친구 물건에 손을 대면 친구들이 실망해서 관계가 멀어질 수 있기 때문에 허락없이 친구 물건에 손을 대면 안됩니다.' }
 `;
 
       const response = await genAI.models.generateContent({
@@ -216,38 +224,21 @@ A3: [답변3]
         return res.status(500).json({ error: 'AI 응답을 받을 수 없습니다.' });
       }
 
-      // Q1:, A1: 패턴으로 파싱
-      const qaPairs: { q: string; a: string }[] = [];
-      const lines = text
-        .trim()
-        .split('\n')
-        .map((line: string) => line.trim())
-        .filter((line: string) => line);
+      const [startIdx, endIdx] = [text.indexOf('{'), text.lastIndexOf('}')];
 
-      let currentQ = '';
-      let currentA = '';
-
-      for (const line of lines) {
-        if (line.match(/^Q\d*:?\s*/i)) {
-          if (currentQ && currentA) {
-            qaPairs.push({ q: currentQ, a: currentA });
-          }
-          currentQ = line.replace(/^Q\d*:?\s*/i, '').trim();
-          currentA = '';
-        } else if (line.match(/^A\d*:?\s*/i)) {
-          currentA = line.replace(/^A\d*:?\s*/i, '').trim();
-        } else if (currentA) {
-          currentA += ' ' + line;
-        } else if (currentQ) {
-          currentQ += ' ' + line;
-        }
+      if (startIdx === -1 || endIdx === -1 || startIdx >= endIdx) {
+        throw new Error('유효한 JSON 형식을 찾을 수 없습니다');
       }
 
-      if (currentQ && currentA) {
-        qaPairs.push({ q: currentQ, a: currentA });
+      const jsonStr = text.slice(startIdx, endIdx + 1);
+      const parsedData = JSON.parse(jsonStr);
+
+      // 필수 필드 검증
+      if (!parsedData.q || !parsedData.a) {
+        throw new Error('질문과 답변이 모두 포함되어야 합니다');
       }
 
-      res.json({ questions: qaPairs.slice(0, 3) });
+      res.json(parsedData);
     } catch (error) {
       console.error('AI 질문/답변 생성 오류:', error);
       res.status(500).json({
@@ -271,7 +262,7 @@ router.post(
         discussionLog,
         userReasons,
         userQuestions,
-        userRating = 1500,
+        // userRating = 1500,
       } = req.body;
 
       if (!subject || !userPosition || !currentStage || !stageDescription) {
@@ -286,29 +277,22 @@ router.post(
           .json({ error: 'Gemini API 키가 설정되지 않았습니다.' });
       }
 
-      // 언어 수준 가이드라인 함수 (간단한 버전)
-      const getLanguageLevelPrompt = (rating: number) => {
-        if (rating < 1200) {
-          return '- 간단하고 이해하기 쉬운 표현을 사용하세요\n- 복잡한 논리보다는 직관적인 설명을 우선하세요';
-        } else if (rating < 1500) {
-          return '- 적당한 수준의 논리적 표현을 사용하세요\n- 기본적인 근거와 예시를 포함하세요';
-        } else {
-          return '- 논리적이고 체계적인 표현을 사용하세요\n- 깊이 있는 분석과 반박을 포함하세요';
-        }
-      };
-
       // 토론 로그를 읽기 쉽게 정리
       const formattedLog =
-        discussionLog
-          ?.filter(
-            (msg: DiscussionMessage) =>
-              msg.sender === 'agree' || msg.sender === 'disagree'
-          )
-          .map((msg: DiscussionMessage) => {
-            const speaker = msg.sender === 'agree' ? '찬성측' : '반대측';
-            return `${speaker}: ${msg.text}`;
-          })
-          .join('\n') || '';
+        `1. 진행자: ${subject}에 대한 토론을 시작하겠습니다.` +
+          discussionLog
+            ?.filter(
+              (msg: DiscussionMessage) =>
+                msg.sender === 'agree' || msg.sender === 'disagree'
+            )
+            .map((msg: DiscussionMessage, idx: number) => {
+              const speaker =
+                msg.sender === 'agree'
+                  ? `${idx + 2}. 찬성측`
+                  : `${idx + 2}. 반대측`;
+              return `${speaker}: ${msg.text}`;
+            })
+            .join('\n\n') || '';
 
       // 상대방의 마지막 발언 추출
       const opponentSender = userPosition === 'agree' ? 'disagree' : 'agree';
@@ -365,7 +349,7 @@ router.post(
       };
 
       const stageInfo = getStageInfo(currentStage);
-      const languageLevelGuide = getLanguageLevelPrompt(userRating);
+      // const languageLevelGuide = getLanguageLevelPrompt(userRating);
 
       // 단계별 프롬프트 생성
       let prompt = `
@@ -412,10 +396,10 @@ ${formattedLog}
 - 듣는이를 지칭하는 표현을 절대 사용하지 마세요 (예: "존경하는 찬성측 토론자분들께", "토론자 여러분", "~분들께" 등 금지)
 - 상대방을 직접 호명하거나 지칭하는 표현도 피하세요
 - 자연스럽고 친근한 톤을 유지하되 논리적 근거는 명확히 제시하세요
-
-언어 수준 및 논리적 복잡성 가이드라인:
-${languageLevelGuide}
 `;
+      // 언어 수준 및 논리적 복잡성 가이드라인:
+      // ${languageLevelGuide}
+      // `;
 
       // 단계별 응답 형식 추가
       if (stageInfo.responseType === 'question_only') {
@@ -429,7 +413,7 @@ ${languageLevelGuide}
         prompt += `
 
 응답 형식: 답변 + 질문
-- 먼저 상대방의 질문이나 주장에 대한 답변을 한 문장으로 작성하세요
+- 먼저 상대방의 질문에 대한 답변을 한 문장으로 작성하세요
 - 그 다음 줄바꿈 후 상대방에게 할 질문을 한 문장으로 작성하세요
 - 형식: "[답변 내용]\n[질문 내용]"
 - 답변과 질문 모두 간결하고 명확하게 작성하세요`;
