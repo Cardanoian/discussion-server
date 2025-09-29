@@ -47,6 +47,7 @@ export type BattleRoom = {
   isFull: boolean;
   battleStarted: boolean;
   hasReferee: boolean;
+  isCompleted: boolean; // 토론 완료 상태 추가
 };
 
 export type DiscussionMessage = {

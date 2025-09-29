@@ -1,10 +1,11 @@
 import { Server, Socket } from 'socket.io';
 import { BattleRoom, Subject } from '../types/database';
 import { supabase } from '../supabaseClient';
-import { startBattleLogic } from './battleHandlers';
+import { startBattleLogic, battleStates } from './battleHandlers';
 import { requestManager } from '../utils/RequestManager';
+import { mockSubjects } from '../utils/mockSubjects';
 
-const rooms: BattleRoom[] = [];
+export const rooms: BattleRoom[] = [];
 
 const createRoom = (roomId: string, subject: Subject): BattleRoom => ({
   roomId,
@@ -13,6 +14,7 @@ const createRoom = (roomId: string, subject: Subject): BattleRoom => ({
   isFull: false,
   battleStarted: false,
   hasReferee: false,
+  isCompleted: false,
 });
 
 export const registerRoomHandlers = (io: Server, socket: Socket) => {
@@ -34,7 +36,7 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
         // console.log('대체 하드코딩된 주제를 사용합니다...');
 
         // console.log('클라이언트에 대체 주제를 전송합니다:', fallbackSubjects);
-        callback({ subjects: fallbackSubjects });
+        callback({ subjects: mockSubjects });
         return;
       }
 
@@ -44,7 +46,7 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
       console.error('데이터베이스 연결 실패, 대체 주제를 사용합니다:', err);
 
       // console.log('Sending fallback subjects to client:', fallbackSubjects);
-      callback({ subjects: fallbackSubjects });
+      callback({ subjects: mockSubjects });
     }
   });
 
@@ -535,7 +537,14 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
         socket.leave(roomId);
 
         if (room.players.length === 0) {
+          // 모든 참여자가 나간 경우 방과 battleStates 모두 정리
           rooms.splice(roomIndex, 1);
+          if (battleStates[roomId]) {
+            delete battleStates[roomId];
+            console.log(
+              `방 ${roomId} 완전 정리 완료 (방, battleStates 모두 삭제)`
+            );
+          }
         } else {
           room.players.forEach((p) => (p.isReady = false));
           // 심판이 나갔는지 확인
@@ -550,32 +559,3 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
     }
   );
 };
-
-// Fallback hardcoded subjects
-const fallbackSubjects = [
-  {
-    uuid: '1',
-    title: '인공지능이 인간의 일자리를 대체할 것인가?',
-    text: '인공지능 기술의 발전으로 많은 직업이 자동화될 가능성이 높아지고 있습니다.',
-  },
-  {
-    uuid: '2',
-    title: '원격근무가 사무실 근무보다 효율적인가?',
-    text: '코로나19 이후 원격근무가 일반화되었습니다. 원격근무와 사무실 근무의 장단점을 비교해보세요.',
-  },
-  {
-    uuid: '3',
-    title: '소셜미디어가 사회에 미치는 영향은 긍정적인가?',
-    text: '소셜미디어는 현대 사회의 필수 요소가 되었습니다. 그 영향이 긍정적인지 부정적인지 토론해보세요.',
-  },
-  {
-    uuid: '4',
-    title: '기본소득제도가 필요한가?',
-    text: '모든 국민에게 조건 없이 일정 금액을 지급하는 기본소득제도에 대해 토론해보세요.',
-  },
-  {
-    uuid: '5',
-    title: '전기차가 환경에 정말 도움이 되는가?',
-    text: '전기차의 환경적 영향에 대해 배터리 생산, 전력 생산 방식 등을 고려하여 토론해보세요.',
-  },
-];

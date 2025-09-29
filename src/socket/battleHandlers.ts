@@ -2,6 +2,7 @@ import { BattleState, MessageEntry } from '../types/battle';
 import { Server, Socket } from 'socket.io';
 import { GoogleGenAI } from '@google/genai';
 import { BattleRoom } from '../types/database';
+import { rooms } from './roomHandlers';
 import {
   startTurnTimer,
   updatePlayerTime,
@@ -497,8 +498,14 @@ ${room.subject.text}
           finalResult
         );
 
-        // 상태 정리
-        delete battleStates[roomId];
+        // 방 완료 상태 설정 (battleStates는 유지하여 결과 확인 가능)
+        const room = rooms.find((r) => r.roomId === roomId);
+        if (room) {
+          room.isCompleted = true;
+          console.log(`방 ${roomId} 토론 완료 상태 설정 (인간심판)`);
+        }
+
+        // battleStates는 나중에 모든 참여자가 방을 나갔을 때 정리됨
       }
     }
   );
@@ -660,25 +667,75 @@ ${room.subject.text}
     'get_room_state',
     ({ roomId, userId }: { roomId: string; userId: string }) => {
       const state = battleStates[roomId];
+      const room = rooms.find((r) => r.roomId === roomId);
+
       if (!state) {
-        // 토론이 시작되지 않았거나 이미 종료된 경우
-        socket.emit('room_state_updated', {
-          messages: [],
-          stage: 0,
-          currentTurn: '',
-          isMyTurn: false,
-          battleEnded: true,
-          timerState: {
-            roundTimeRemaining: 120,
-            totalTimeRemaining: 300,
-            isRunning: false,
-            isOvertime: false,
-            overtimeRemaining: 30,
-            roundTimeLimit: 120,
-            totalTimeLimit: 300,
-          },
-          players: [],
-        });
+        // battleStates가 없는 경우: 방이 완료되었거나 아직 시작되지 않음
+        if (room && room.isCompleted) {
+          // 토론이 완료된 방인 경우 - 완료 상태로 응답
+          console.log(`완료된 방 ${roomId}에 대한 상태 요청`);
+          socket.emit('room_state_updated', {
+            messages: [], // 완료된 방의 메시지는 별도로 관리할 수 있음
+            stage: 10,
+            currentTurn: '',
+            isMyTurn: false,
+            battleEnded: true,
+            isCompleted: true, // 완료 상태 표시
+            timerState: {
+              roundTimeRemaining: 120,
+              totalTimeRemaining: 300,
+              isRunning: false,
+              isOvertime: false,
+              overtimeRemaining: 30,
+              roundTimeLimit: 120,
+              totalTimeLimit: 300,
+            },
+            stageDescription: '토론 완료',
+            players: room.players.map((p) => ({
+              userId: p.userId,
+              role: p.role,
+              position: p.position,
+              displayName: p.displayname,
+            })),
+            timerInfo: {
+              myPenaltyPoints: 0,
+              opponentPenaltyPoints: 0,
+              maxPenaltyPoints: 18,
+            },
+          });
+        } else {
+          // 토론이 시작되지 않았거나 방이 없는 경우
+          socket.emit('room_state_updated', {
+            messages: [],
+            stage: 0,
+            currentTurn: '',
+            isMyTurn: false,
+            battleEnded: true,
+            isCompleted: false,
+            timerState: {
+              roundTimeRemaining: 120,
+              totalTimeRemaining: 300,
+              isRunning: false,
+              isOvertime: false,
+              overtimeRemaining: 30,
+              roundTimeLimit: 120,
+              totalTimeLimit: 300,
+            },
+            stageDescription: '토론 시작 전',
+            players:
+              room?.players.map((p) => ({
+                userId: p.userId,
+                role: p.role,
+                position: p.position,
+                displayName: p.displayname,
+              })) || [],
+            timerInfo: {
+              myPenaltyPoints: 0,
+              opponentPenaltyPoints: 0,
+              maxPenaltyPoints: 18,
+            },
+          });
+        }
         return;
       }
 
@@ -1087,8 +1144,14 @@ ${disagreeMessages}
         resultJson
       );
 
-      // 상태 정리
-      delete battleStates[roomId];
+      // 방 완료 상태 설정 (battleStates는 유지하여 결과 확인 가능)
+      const room = rooms.find((r) => r.roomId === roomId);
+      if (room) {
+        room.isCompleted = true;
+        console.log(`방 ${roomId} 토론 완료 상태 설정`);
+      }
+
+      // battleStates는 나중에 모든 참여자가 방을 나갔을 때 정리됨
     }
   } catch (error) {
     console.error('AI 평가 오류:', error);
