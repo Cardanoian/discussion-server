@@ -654,6 +654,165 @@ ${room.subject.text}
       socket.emit('messages_updated', state.messages);
     }
   });
+
+  // 클라이언트가 전체 방 상태를 요청하는 핸들러 (새로고침 시 상태 동기화용)
+  socket.on(
+    'get_room_state',
+    ({ roomId, userId }: { roomId: string; userId: string }) => {
+      const state = battleStates[roomId];
+      if (!state) {
+        // 토론이 시작되지 않았거나 이미 종료된 경우
+        socket.emit('room_state_updated', {
+          messages: [],
+          stage: 0,
+          currentTurn: '',
+          isMyTurn: false,
+          battleEnded: true,
+          timerState: {
+            roundTimeRemaining: 120,
+            totalTimeRemaining: 300,
+            isRunning: false,
+            isOvertime: false,
+            overtimeRemaining: 30,
+            roundTimeLimit: 120,
+            totalTimeLimit: 300,
+          },
+          players: [],
+        });
+        return;
+      }
+
+      // 현재 턴인 플레이어 찾기
+      let currentTurnUserId = '';
+      let currentTurnPlayer = null;
+
+      if (state.stage >= 1 && state.stage <= 9) {
+        // 각 단계별 턴 결정
+        switch (state.stage) {
+          case 1: // 찬성측 대표발언
+          case 4: // 찬성측 답변 및 질문
+          case 6: // 찬성측 답변 및 질문
+          case 8: // 찬성측 최종발언
+            currentTurnUserId = state.agreePlayer.userId;
+            currentTurnPlayer = state.agreePlayer;
+            break;
+          case 2: // 반대측 대표발언
+          case 3: // 반대측 질문
+          case 5: // 반대측 답변 및 질문
+          case 7: // 반대측 답변
+          case 9: // 반대측 최종발언
+            currentTurnUserId = state.disagreePlayer.userId;
+            currentTurnPlayer = state.disagreePlayer;
+            break;
+        }
+      }
+
+      // 타이머 상태 계산
+      const playerTimer = currentTurnUserId
+        ? state.timers[currentTurnUserId]
+        : null;
+      const currentTime = Date.now();
+      const turnStartTime = state.currentTurnStartTime || currentTime;
+
+      let roundTimeRemaining = Math.max(
+        0,
+        Math.floor(
+          (state.roundTimeLimit - (currentTime - turnStartTime)) / 1000
+        )
+      );
+      let totalTimeRemaining = playerTimer
+        ? Math.max(
+            0,
+            Math.floor(
+              (state.totalTimeLimit - playerTimer.totalTimeUsed) / 1000
+            )
+          )
+        : 300;
+
+      // 연장시간 계산
+      let isOvertime = false;
+      let overtimeRemaining = 30;
+      if (
+        roundTimeRemaining <= 0 &&
+        playerTimer &&
+        !playerTimer.isOvertime &&
+        currentTurnUserId
+      ) {
+        isOvertime = true;
+        overtimeRemaining = Math.max(
+          0,
+          Math.floor(
+            (state.overtimeLimit -
+              (currentTime - turnStartTime - state.roundTimeLimit)) /
+              1000
+          )
+        );
+      }
+
+      const timerState = {
+        roundTimeRemaining,
+        totalTimeRemaining,
+        isRunning:
+          currentTurnUserId === userId && state.stage >= 1 && state.stage <= 9,
+        isOvertime,
+        overtimeRemaining,
+        roundTimeLimit: Math.floor(state.roundTimeLimit / 1000),
+        totalTimeLimit: Math.floor(state.totalTimeLimit / 1000),
+      };
+
+      // 단계별 설명
+      const getStageDescription = (stage: number): string => {
+        switch (stage) {
+          case 1:
+            return '찬성측 대표발언';
+          case 2:
+            return '반대측 대표발언';
+          case 3:
+            return '반대측 질문';
+          case 4:
+            return '찬성측 답변 및 질문';
+          case 5:
+            return '반대측 답변 및 질문';
+          case 6:
+            return '찬성측 답변 및 질문';
+          case 7:
+            return '반대측 답변';
+          case 8:
+            return '찬성측 최종발언';
+          case 9:
+            return '반대측 최종발언';
+          case 10:
+            return 'AI 심판 평가';
+          default:
+            return '토론 시작 전';
+        }
+      };
+
+      // 전체 상태 정보 전송
+      socket.emit('room_state_updated', {
+        messages: state.messages,
+        stage: state.stage,
+        currentTurn: currentTurnUserId,
+        isMyTurn: currentTurnUserId === userId,
+        battleEnded: state.stage >= 10 || state.isGameEndedByPenalty,
+        timerState,
+        stageDescription: getStageDescription(state.stage),
+        players: state.players.map((p) => ({
+          userId: p.userId,
+          role: p.role,
+          position: p.position,
+          displayName: p.displayname,
+        })),
+        timerInfo: {
+          myPenaltyPoints: state.timers[userId]?.penaltyPoints || 0,
+          opponentPenaltyPoints:
+            Object.entries(state.timers).find(([id]) => id !== userId)?.[1]
+              ?.penaltyPoints || 0,
+          maxPenaltyPoints: state.maxPenaltyPoints,
+        },
+      });
+    }
+  );
 };
 
 // 다음 단계로 진행하는 함수
