@@ -24,28 +24,21 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
   });
 
   socket.on('get_subjects', async (callback) => {
-    // console.log('데이터베이스에서 주제를 가져오는 중...');
-
     // Try database first, fallback to hardcoded data if it fails
     try {
       const { data, error } = await supabase.from('subjects').select('*');
-      // console.log('주제 쿼리 결과:', { data, error });
 
       if (error) {
         console.error('주제 가져오기 오류:', error);
-        // console.log('대체 하드코딩된 주제를 사용합니다...');
 
-        // console.log('클라이언트에 대체 주제를 전송합니다:', fallbackSubjects);
         callback({ subjects: mockSubjects });
         return;
       }
 
-      // console.log('클라이언트에 주제를 전송합니다:', data);
       callback({ subjects: data });
     } catch (err) {
       console.error('데이터베이스 연결 실패, 대체 주제를 사용합니다:', err);
 
-      // console.log('Sending fallback subjects to client:', fallbackSubjects);
       callback({ subjects: mockSubjects });
     }
   });
@@ -122,7 +115,6 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
           'rooms_update',
           rooms.filter((r) => !r.isFull && !r.battleStarted)
         );
-        // console.log(newRoom);
       } catch (error) {
         console.error('방 생성 오류:', error);
         callback({ error: '방 생성 중 오류가 발생했습니다.' });
@@ -210,40 +202,20 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
 
   // 내가 들어가 있는 방 반환
   socket.on('get_my_room', ({ userId }, callback) => {
-    console.log('get_my_room 요청:', { userId, totalRooms: rooms.length });
-
     const myRoom = rooms.find((room) =>
       room.players.some((p) => p.userId === userId)
     );
+    callback({ room: myRoom ?? null });
 
-    if (myRoom) {
-      console.log('방 찾음:', {
-        roomId: myRoom.roomId,
-        battleStarted: myRoom.battleStarted,
-        playersCount: myRoom.players.length,
-        players: myRoom.players.map((p) => ({
-          userId: p.userId,
-          role: p.role,
-          position: p.position,
-        })),
-      });
-      callback({ room: myRoom });
-    } else {
-      console.log(
-        '방을 찾을 수 없음. 현재 방 목록:',
-        rooms.map((r) => ({
-          roomId: r.roomId,
-          players: r.players.map((p) => p.userId),
-        }))
-      );
-      callback({ room: null });
-    }
+    // if (myRoom) {
+    //   callback({ room: myRoom });
+    // } else {
+    //   callback({ room: null });
+    // }
   });
 
   // 사용자 프로필 정보 반환
   socket.on('get_user_profile', async ({ userId }, callback) => {
-    console.log('get_user_profile 요청:', userId);
-
     try {
       const { data: profile, error } = await supabase
         .from('user_profile')
@@ -252,17 +224,14 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
         .single();
 
       if (error && error.code !== 'PGRST116') {
-        console.error('사용자 프로필 조회 오류:', error);
         callback({ userProfile: null, error: error.message });
         return;
       }
 
       if (profile) {
-        console.log('사용자 프로필 조회 성공:', profile);
         callback({ userProfile: profile, error: null });
       } else {
         // 프로필이 없으면 기본 프로필 생성
-        console.log('프로필이 없어서 새로 생성:', userId);
         const { data: newProfile, error: createError } = await supabase
           .from('user_profile')
           .insert({
@@ -279,7 +248,6 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
           console.error('사용자 프로필 생성 오류:', createError);
           callback({ userProfile: null, error: createError.message });
         } else {
-          console.log('새 사용자 프로필 생성 성공:', newProfile);
           callback({ userProfile: newProfile, error: null });
         }
       }
@@ -439,7 +407,6 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
   socket.on(
     'join_discussion_room',
     ({ roomId, userId }: { roomId: string; userId: string }) => {
-      // console.log(`${userId}가 토론 룸 ${roomId}에 join 시도`);
       const room = rooms.find((r) => r.roomId === roomId);
       if (room) {
         const player = room.players.find((p) => p.userId === userId);
@@ -447,9 +414,6 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
           // 플레이어의 소켓 ID를 현재 소켓으로 업데이트
           player.socketId = socket.id;
           socket.join(roomId);
-          console.log(
-            `${player.displayname}이 토론 룸에 join 완료, 새 소켓 ID: ${socket.id}`
-          );
         }
       }
     }
@@ -464,7 +428,6 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
         if (player) {
           // 플레이어를 discussionView 준비 완료로 표시
           player.discussionViewReady = true;
-          // console.log(`${player.displayname}이 discussionView 준비 완료`);
 
           // 두 플레이어 모두 준비되었는지 확인
           const allPlayersReady = room.players.every(
@@ -472,8 +435,6 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
           );
 
           if (allPlayersReady) {
-            // console.log('모든 플레이어가 discussionView 준비 완료, 역할 할당 후 토론 시작');
-
             // 토론 시작 전에 플레이어 역할과 입장을 확정
             const playerRolePlayers = room.players.filter(
               (p) => p.role === 'player'
@@ -541,9 +502,6 @@ export const registerRoomHandlers = (io: Server, socket: Socket) => {
           rooms.splice(roomIndex, 1);
           if (battleStates[roomId]) {
             delete battleStates[roomId];
-            console.log(
-              `방 ${roomId} 완전 정리 완료 (방, battleStates 모두 삭제)`
-            );
           }
         } else {
           room.players.forEach((p) => (p.isReady = false));

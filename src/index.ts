@@ -46,19 +46,14 @@ const app = express();
 
 // CORS 설정 개선
 const corsOptions = {
-  origin:
-    // process.env.NODE_ENV === 'production'
-    //   ? process.env.FRONTEND_URL || 'https://your-frontend-domain.com'
-    //   :
-    [
-      'http://133.186.241.101',
-      'http://localhost:3000',
-      'http://localhost:5173',
-      'http://127.0.0.1:3000',
-      'http://127.0.0.1:5173',
-      'https://ai-dis.netlify.app',
-      process.env.FRONTEND_URL ?? 'https://debate.gbeai.net',
-    ],
+  origin: [
+    'http://133.186.241.101',
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:5173',
+    'https://debate.gbeai.net',
+  ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],

@@ -49,7 +49,6 @@ const addMessage = (
 // 토론 시작 로직을 별도 함수로 분리
 export const startBattleLogic = async (io: Server, room: BattleRoom) => {
   const { roomId } = room;
-  // console.log('토론 시작 로직 실행:', roomId, room);
 
   try {
     if (!room.subject) {
@@ -61,14 +60,9 @@ export const startBattleLogic = async (io: Server, room: BattleRoom) => {
       return;
     }
 
-    // console.log('플레이어 정보:', room.players);
-
     // 찬성/반대 플레이어 구분
     const agreePlayer = room.players.find((p) => p.position === 'agree');
     const disagreePlayer = room.players.find((p) => p.position === 'disagree');
-
-    // console.log('찬성측 플레이어:', agreePlayer);
-    // console.log('반대측 플레이어:', disagreePlayer);
 
     if (!agreePlayer || !disagreePlayer) {
       console.error('플레이어 입장 설정 안됨');
@@ -76,7 +70,6 @@ export const startBattleLogic = async (io: Server, room: BattleRoom) => {
       if (room.players.length === 2) {
         room.players[0].position = 'agree';
         room.players[1].position = 'disagree';
-        // console.log('자동으로 입장 설정:', room.players);
       } else {
         io.to(roomId).emit(
           'battle_error',
@@ -124,8 +117,6 @@ export const startBattleLogic = async (io: Server, room: BattleRoom) => {
       isGameEndedByPenalty: false,
     };
 
-    // console.log('배틀 상태 초기화 완료:', battleStates[roomId]);
-
     // AI 심판 시작 - 주제 및 절차 안내
     const openingMessage = `안녕하세요! AI 심판입니다. 
 
@@ -157,7 +148,6 @@ ${room.subject.text}
     const turnMessage = `찬성측 ${finalAgreePlayer.displayname}님의 대표발언 차례입니다.`;
     addMessage(io, roomId, 'system', turnMessage);
 
-    // console.log('1단계 진행 - 찬성측 대표발언');
     io.to(roomId).emit('turn_info', {
       currentPlayerId: finalAgreePlayer.userId,
       stage: 1,
@@ -171,11 +161,8 @@ ${room.subject.text}
 };
 
 export const registerBattleHandlers = (io: Server, socket: Socket) => {
-  // console.log(`battleHandlers 등록됨 for 소켓: ${socket.id}`);
-
   socket.on('start_battle_logic', async (room: BattleRoom) => {
     const { roomId } = room;
-    // console.log('토론 시작 로직 실행:', roomId, room);
 
     try {
       if (!room.subject) {
@@ -187,16 +174,11 @@ export const registerBattleHandlers = (io: Server, socket: Socket) => {
         return;
       }
 
-      // console.log('플레이어 정보:', room.players);
-
       // 찬성/반대 플레이어 구분
       const agreePlayer = room.players.find((p) => p.position === 'agree');
       const disagreePlayer = room.players.find(
         (p) => p.position === 'disagree'
       );
-
-      // console.log('찬성측 플레이어:', agreePlayer);
-      // console.log('반대측 플레이어:', disagreePlayer);
 
       if (!agreePlayer || !disagreePlayer) {
         console.error('플레이어 입장 설정 안됨');
@@ -204,7 +186,6 @@ export const registerBattleHandlers = (io: Server, socket: Socket) => {
         if (room.players.length === 2) {
           room.players[0].position = 'agree';
           room.players[1].position = 'disagree';
-          // console.log('자동으로 입장 설정:', room.players);
         } else {
           io.to(roomId).emit(
             'battle_error',
@@ -254,8 +235,6 @@ export const registerBattleHandlers = (io: Server, socket: Socket) => {
         isGameEndedByPenalty: false,
       };
 
-      // console.log('배틀 상태 초기화 완료:', battleStates[roomId]);
-
       // AI 심판 시작 - 주제 및 절차 안내
       const openingMessage = `안녕하세요! AI 심판입니다. 
 
@@ -277,7 +256,6 @@ ${room.subject.text}
 
 그럼 먼저 찬성측인 ${finalAgreePlayer.displayname}님부터 대표발언을 시작해주세요.`;
 
-      // console.log('AI 심판 메시지 전송:', openingMessage);
       io.to(roomId).emit('ai_judge_message', {
         message: openingMessage,
         stage: 0,
@@ -300,7 +278,6 @@ ${room.subject.text}
       const turnMessage = `찬성측 ${finalAgreePlayer.displayname}님의 대표발언 차례입니다.`;
       addMessage(io, roomId, 'system', turnMessage);
 
-      // console.log('1단계 진행 - 찬성측 대표발언');
       io.to(roomId).emit('turn_info', {
         currentPlayerId: finalAgreePlayer.userId,
         stage: 1,
@@ -324,17 +301,15 @@ ${room.subject.text}
       userId: string;
       message: string;
     }) => {
-      // console.log('send_message 이벤트 수신:', { roomId, userId, message });
-
       const room = io.sockets.adapter.rooms.get(roomId);
       if (!room) {
-        console.log('룸을 찾을 수 없음:', roomId);
+        console.error('룸을 찾을 수 없음:', roomId);
         return;
       }
 
       const state = battleStates[roomId];
       if (!state) {
-        console.log('배틀 상태를 찾을 수 없음:', roomId);
+        console.error('배틀 상태를 찾을 수 없음:', roomId);
         return;
       }
 
@@ -375,11 +350,9 @@ ${room.subject.text}
       userId: string;
       type: 'round' | 'total' | 'overtime';
     }) => {
-      // console.log('time_overflow 이벤트 수신:', { roomId, userId, type });
-
       const state = battleStates[roomId];
       if (!state) {
-        console.log('배틀 상태를 찾을 수 없음:', roomId);
+        console.error('배틀 상태를 찾을 수 없음:', roomId);
         return;
       }
 
@@ -502,7 +475,6 @@ ${room.subject.text}
         const room = rooms.find((r) => r.roomId === roomId);
         if (room) {
           room.isCompleted = true;
-          console.log(`방 ${roomId} 토론 완료 상태 설정 (인간심판)`);
         }
 
         // battleStates는 나중에 모든 참여자가 방을 나갔을 때 정리됨
@@ -673,7 +645,7 @@ ${room.subject.text}
         // battleStates가 없는 경우: 방이 완료되었거나 아직 시작되지 않음
         if (room && room.isCompleted) {
           // 토론이 완료된 방인 경우 - 완료 상태로 응답
-          console.log(`완료된 방 ${roomId}에 대한 상태 요청`);
+          // 완료된 방 ${roomId}에 대한 상태 요청
           socket.emit('room_state_updated', {
             messages: [], // 완료된 방의 메시지는 별도로 관리할 수 있음
             stage: 10,
@@ -703,6 +675,37 @@ ${room.subject.text}
               maxPenaltyPoints: 18,
             },
           });
+        } else if (room && room.battleStarted) {
+          // 토론이 시작되었지만 battleStates가 아직 생성되지 않은 경우
+          socket.emit('room_state_updated', {
+            messages: [],
+            stage: 0,
+            currentTurn: '',
+            isMyTurn: false,
+            battleEnded: false, // 토론이 진행 중
+            isCompleted: false,
+            timerState: {
+              roundTimeRemaining: 120,
+              totalTimeRemaining: 300,
+              isRunning: false,
+              isOvertime: false,
+              overtimeRemaining: 30,
+              roundTimeLimit: 120,
+              totalTimeLimit: 300,
+            },
+            stageDescription: '토론 준비 중',
+            players: room.players.map((p) => ({
+              userId: p.userId,
+              role: p.role,
+              position: p.position,
+              displayName: p.displayname,
+            })),
+            timerInfo: {
+              myPenaltyPoints: 0,
+              opponentPenaltyPoints: 0,
+              maxPenaltyPoints: 18,
+            },
+          });
         } else {
           // 토론이 시작되지 않았거나 방이 없는 경우
           socket.emit('room_state_updated', {
@@ -710,7 +713,7 @@ ${room.subject.text}
             stage: 0,
             currentTurn: '',
             isMyTurn: false,
-            battleEnded: true,
+            battleEnded: false, // 아직 시작되지 않음
             isCompleted: false,
             timerState: {
               roundTimeRemaining: 120,
@@ -1147,8 +1150,8 @@ ${disagreeMessages}
       // 방 완료 상태 설정 (battleStates는 유지하여 결과 확인 가능)
       const room = rooms.find((r) => r.roomId === roomId);
       if (room) {
+        // 방 ${roomId} 토론 완료 상태 설정
         room.isCompleted = true;
-        console.log(`방 ${roomId} 토론 완료 상태 설정`);
       }
 
       // battleStates는 나중에 모든 참여자가 방을 나갔을 때 정리됨
