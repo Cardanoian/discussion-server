@@ -11,7 +11,7 @@ declare global {
   }
 }
 
-const router = express.Router();
+export const router = express.Router();
 
 // 메시지 타입 정의
 interface DiscussionMessage {
@@ -24,10 +24,10 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 if (!GEMINI_API_KEY) {
   console.error('GEMINI_API_KEY가 설정되지 않았습니다.');
 }
-const genAI = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+export const genAI = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
 // 사용자 인증 미들웨어
-const authenticateUser = async (
+export const authenticateUser = async (
   req: express.Request,
   res: express.Response,
   next: express.NextFunction
@@ -445,6 +445,13 @@ ${formattedLog}
       });
     }
   }
+);
+
+// Avatar 생성 Router
+router.post(
+  '/generate-avatar',
+  authenticateUser,
+  async (req: express.Request, res: express.Response) => {}
 );
 
 export default router;
