@@ -1,6 +1,7 @@
 import express from 'express';
 import { GoogleGenAI } from '@google/genai';
 import { supabase } from '../supabaseClient';
+import { createAndUpdateAvatar } from './generateAvatar';
 
 // Express Request 타입 확장
 declare global {
@@ -448,10 +449,46 @@ ${formattedLog}
 );
 
 // Avatar 생성 Router
+
+/**
+ * 아바타 생성 API 엔드포인트
+ */
 router.post(
   '/generate-avatar',
   authenticateUser,
-  async (req: express.Request, res: express.Response) => {}
+  async (req: express.Request, res: express.Response) => {
+    try {
+      const { userId, style, customization } = req.body;
+
+      // 입력 검증
+      if (!userId || !style || !customization) {
+        return res.status(400).json({
+          error:
+            '필수 파라미터가 누락되었습니다. (userId, style, customization)',
+        });
+      }
+
+      console.log('Generating avatar...', { userId, style, customization });
+
+      const avatarUrl = await createAndUpdateAvatar(
+        userId,
+        style,
+        customization
+      );
+
+      console.log('Avatar created successfully:', avatarUrl);
+
+      res.json({ avatarUrl });
+    } catch (error) {
+      console.error('Error in generate-avatar endpoint:', error);
+      res.status(500).json({
+        error:
+          error instanceof Error
+            ? error.message
+            : '아바타 생성 중 오류가 발생했습니다.',
+      });
+    }
+  }
 );
 
 export default router;
