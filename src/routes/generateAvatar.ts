@@ -1,6 +1,7 @@
 import { supabase } from '../supabaseClient';
 import { avatarStyles, type AvatarStyle } from '../types/avatar';
 import { genAI } from './gemini';
+import sharp from 'sharp';
 
 interface GenerateAvatarOptions {
   style: AvatarStyle;
@@ -89,6 +90,28 @@ async function generateAvatarWithGemini({
 }
 
 /**
+ * 이미지 리사이즈 및 최적화
+ */
+async function resizeAndOptimizeImage(blob: Blob): Promise<Buffer> {
+  const arrayBuffer = await blob.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+
+  // 256x256 크기로 리사이즈하고 품질 최적화
+  const resizedBuffer = await sharp(buffer)
+    .resize(256, 256, {
+      fit: 'cover',
+      position: 'center',
+    })
+    .png({
+      quality: 80,
+      compressionLevel: 9,
+    })
+    .toBuffer();
+
+  return resizedBuffer;
+}
+
+/**
  * Supabase Storage에 아바타 업로드
  */
 async function uploadAvatarToStorage(
@@ -96,6 +119,9 @@ async function uploadAvatarToStorage(
   blob: Blob
 ): Promise<string> {
   const fileName = `${userId}.png`;
+
+  // 이미지 리사이즈 및 최적화
+  const optimizedBuffer = await resizeAndOptimizeImage(blob);
 
   // Storage 버킷 확인 및 생성
   const { data: buckets } = await supabase.storage.listBuckets();
@@ -117,19 +143,33 @@ async function uploadAvatarToStorage(
     }
   }
 
-  // 새 아바타 업로드
+  // 기존 파일 삭제 (있다면)
+  const { error: deleteError } = await supabase.storage
+    .from('avatar_img')
+    .remove([fileName]);
+
+  if (deleteError) {
+    console.log('No existing file to delete or delete failed:', deleteError);
+    // 삭제 실패는 무시 (파일이 없을 수 있음)
+  }
+
+  // 새 아바타 업로드 (최적화된 버퍼 사용)
   const { error: uploadError } = await supabase.storage
     .from('avatar_img')
-    .upload(fileName, blob, {
+    .upload(fileName, optimizedBuffer, {
       contentType: 'image/png',
       cacheControl: '3600',
-      upsert: true,
+      upsert: false,
     });
 
   if (uploadError) {
     console.error('Error uploading avatar:', uploadError);
     throw uploadError;
   }
+
+  console.log(
+    `Avatar uploaded successfully. Original size: ${blob.size} bytes, Optimized size: ${optimizedBuffer.length} bytes`
+  );
 
   // Public URL 가져오기
   const { data: urlData } = supabase.storage
