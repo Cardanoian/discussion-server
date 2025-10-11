@@ -118,7 +118,8 @@ async function uploadAvatarToStorage(
   userId: string,
   blob: Blob
 ): Promise<string> {
-  const fileName = `${userId}.png`;
+  const timestamp = Date.now();
+  const fileName = `${userId}_${timestamp}.png`;
 
   // 이미지 리사이즈 및 최적화
   const optimizedBuffer = await resizeAndOptimizeImage(blob);
@@ -143,14 +144,29 @@ async function uploadAvatarToStorage(
     }
   }
 
-  // 기존 파일 삭제 (있다면)
-  const { error: deleteError } = await supabase.storage
+  // 해당 사용자의 모든 이전 아바타 파일 삭제
+  const { data: existingFiles } = await supabase.storage
     .from('avatar_img')
-    .remove([fileName]);
+    .list('', {
+      search: userId,
+    });
 
-  if (deleteError) {
-    console.log('No existing file to delete or delete failed:', deleteError);
-    // 삭제 실패는 무시 (파일이 없을 수 있음)
+  if (existingFiles && existingFiles.length > 0) {
+    const filesToDelete = existingFiles
+      .filter((file) => file.name.startsWith(`${userId}_`))
+      .map((file) => file.name);
+
+    if (filesToDelete.length > 0) {
+      const { error: deleteError } = await supabase.storage
+        .from('avatar_img')
+        .remove(filesToDelete);
+
+      if (deleteError) {
+        console.log('Error deleting old files:', deleteError);
+      } else {
+        console.log(`Deleted ${filesToDelete.length} old avatar file(s)`);
+      }
+    }
   }
 
   // 새 아바타 업로드 (최적화된 버퍼 사용)
